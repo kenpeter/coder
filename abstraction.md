@@ -155,6 +155,40 @@ Goal: convert `/mnt/file_drive/data/ultradata` (1.2 TB, 22 languages, L2/L3 tier
 
 ### Target model architecture — modded-nanogpt record #360 (ANVIL2), scaled to 12 GB
 
+```
+                        UltraData code token stream
+                                  |
+        +-------------------------+-------------------------+
+        |                         |                         |
+   [token embed]          hashed n-gram table          prefix table
+        |                 (bigram + trigram halves;      (prefix-token
+        |                  b1=0, sparse row-RMS Adam)     prediction)
+        |                         |
+     x0 = norm(embed)            |
+        |                         |
+        v                         |
+  +============= 11 transformer blocks =============+
+  |  each block:                                     |  injection sites:
+  |    x += resid_lambda * Attn(norm(x))             |    x0      -> layers 0,1,2,4,5,7
+  |         (attn on layers 0,1,2,3,5,8,10;          |    n-gram  -> layers 0,1,4,5,9
+  |          layers 4,6,7,9 = no attention)          |    layer 6 -> gated skip from layer 3
+  |         GQA + RoPE + QK-RMSNorm,                 |
+  |         mixed head widths (QK 128 wide / 64 narrow, V 64 half),
+  |         paired heads, YaRN, sliding-window + partial key offset,
+  |         value embeddings, gated XSA, per-head MUDD out-gate
+  |    x += post_lambda * ReLU^2(MLP(norm(x)))       |
+  |         (all layers except 7; layer 8 runs a parallel MLP)
+  |    MUDD gates (pre gate < layer 4, post gate >= layer 4) + residual mix
+  +==================================================+
+        |
+     final norm
+        |
+     lm_head (fp8) --> logits
+        |
+     loss: sampled softmax (train)  |  full softmax (val)
+     aux : MTP head, prefix-token prediction
+```
+
 Decision: the model is **not** the SAN x-small architecture. It is the architecture of
 `KellerJordan/modded-nanogpt` record #360 (ANVIL2), used verbatim (every feature below),
 with only the *size* knobs reduced so the whole run fits a single 4070 Ti (12 GB, Ada
