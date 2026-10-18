@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 _calcx.py
+
+# dev scratch (not part of the pipeline)
+_tokcheck.py
+_wire.sh
+_smoke/
+.venv/
+.swarm/
