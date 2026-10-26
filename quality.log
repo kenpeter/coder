@@ -1,0 +1,28 @@
+progress 0 rows 135342 bad 0
+progress 25 rows 3518698 bad 0
+progress 50 rows 6901966 bad 0
+progress 75 rows 10285273 bad 0
+progress 100 rows 13668394 bad 0
+progress 125 rows 17051847 bad 0
+progress 150 rows 20435293 bad 0
+progress 175 rows 23762426 bad 0
+progress 200 rows 27189192 bad 0
+progress 225 rows 31133427 bad 0
+progress 250 rows 35041217 bad 0
+progress 275 rows 38948923 bad 0
+progress 300 rows 42857253 bad 0
+progress 325 rows 46765054 bad 0
+progress 350 rows 51058725 bad 0
+progress 375 rows 55998482 bad 0
+progress 400 rows 58580868 bad 0
+progress 425 rows 62109748 bad 0
+progress 450 rows 65638789 bad 0
+progress 475 rows 69026571 bad 1
+progress 500 rows 72555395 bad 1
+progress 525 rows 76084391 bad 1
+progress 550 rows 79776167 bad 1
+progress 559 rows 81063953 bad 1
+DONE files 560 rows 81063953 bad 1
+nulls {'uuid': 0, 'task': 0, 'analysis': 0, 'solution': 0, 'test': 0}
+empties {'uuid': 0, 'task': 0, 'analysis': 0, 'solution': 0, 'test': 0}
+SAVED

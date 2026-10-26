@@ -1,0 +1,5 @@
+Device: NVIDIA GeForce RTX 4070 Ti
+VRAM: 12.4 GB
+/home/kenpeter/work/coder/train_san.py:68: UserWarning: The given buffer is not writable, and PyTorch does not support non-writable tensors. This means you can write to the underlying (supposedly non-writable) buffer using the tensor. You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_new.cpp:1556.)
+  tokens = torch.frombuffer(data, dtype=torch.uint16).clone()
+Starting training at step 0, target 1000000 steps

@@ -1,0 +1,1 @@
+{"rows": 81063953, "nulls": {"uuid": 0, "task": 0, "analysis": 0, "solution": 0, "test": 0}, "empties": {"uuid": 0, "task": 0, "analysis": 0, "solution": 0, "test": 0}, "bad": [["UltraData-Code-L3-py-part-00075-of-00147.parquet", "Corrupt snappy compressed data."]]}

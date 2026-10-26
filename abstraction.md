@@ -90,3 +90,12 @@ Training: target **1,000,000 steps**, GPU power cap **150 W** (max token/s on RT
 - **Rotation:** Stage 1 CPT on L2; Stage 2 fixed 1:1 L2+L3 mix; Stage 3 L3 gold only
 - **Data loader:** Simple sequential chunking (no BOS markers in shards), restarts at document boundary for varlen packing
 
+## SSD Rotation Plan (UltraData L2 code)
+SSD free ~291 GB; tiers ~150 GB (easy) + 114 GB (medium) + 135 GB (hard) = 399 GB,
+so not all fit at once. Train in two-tier stages on SSD:
+- Stage 1: easy + medium (~264 GB) on SSD
+- Stage 2: medium + hard (~249 GB) on SSD
+- Stage 3: easy + hard (~285 GB) on SSD
+Per stage: stop training, rsync tiers HDD→SSD, repoint SHARD_DIRS, train with
+--resume san_latest.pt, then delete swapped tier and copy next.
+
