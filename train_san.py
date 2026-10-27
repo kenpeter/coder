@@ -9,7 +9,7 @@ Checkpointing follows the user rule: NEVER save best.pt — always latest (resum
 always from latest). Dataset: flat farm (_shards_final) by default, or the
 stratifed domain-tiered curriculum (ported from small) via --curriculum.
 """
-import argparse, json, math, os, random, time
+import argparse, hashlib, json, math, os, random, time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,41 +88,54 @@ def build_dataloader(cfg, is_val=False):
 # ============================================================================
 
 SHARD_DIRS = {
-    "code_easy":   Path("/home/kenpeter/work/data_ssd/_shards_code_easy"),
+    "code_easy":   Path("/home/kenpeter/work/data/_shards_code_easy"),
+    "code_medium": Path("/home/kenpeter/work/data/_shards_code_medium"),
+    "code_hard":   Path("/home/kenpeter/work/data/_shards_code_hard"),
+    "code_gold":   Path("/home/kenpeter/work/data/_shards_code_gold"),
 }
 
 CURRICULUM_UPDATE_INTERVAL = 2000  # steps between ratio rebuilds
 
+# L2 tiers are per-language quality quantiles (easy = bottom third, hard = top
+# third). L3 gold is instruction-style task/analysis/solution/test data — the
+# most useful signal for HumanEval-like "docstring -> implementation" tasks.
 EASY_SPLIT = {"code_easy": 1.0}
-MED_SPLIT = {}
-HARD_SPLIT = {}
+MED_SPLIT = {"code_medium": 1.0}
+HARD_SPLIT = {"code_hard": 1.0}
+GOLD_SPLIT = {"code_gold": 1.0}
 
 DOMAIN_TIER = {}
 for _d in EASY_SPLIT:   DOMAIN_TIER[_d] = "_easy"
 for _d in MED_SPLIT:    DOMAIN_TIER[_d] = "_medium"
 for _d in HARD_SPLIT:   DOMAIN_TIER[_d] = "_hard"
+for _d in GOLD_SPLIT:   DOMAIN_TIER[_d] = "_gold"
 
 WEB_BOOST = 1.5
 WEB_BOOST_FILE = Path(__file__).parent / "curriculum_boost.json"
 
 
 def _smooth_tier_weights(t):
-    tt = t if t < 0.5 else 1.0 - t
-    w_easy = 0.05 + 0.25 * (1 - tt)
-    w_hard = min(0.70, 0.25 + 0.45 * tt)
-    w_med = max(0.0, 1.0 - w_easy - w_hard)
-    return w_easy, w_med, w_hard
+    """Boundary-sharpening schedule (t in [0,1]):
+    easy 0.30 -> 0.05, medium 0.40 -> 0.15, hard 0.20 -> 0.55, gold 0.10 -> 0.25.
+    Gold is present from the start so instruction-style code is never absent.
+    """
+    t = min(1.0, max(0.0, t))
+    w_easy = 0.30 - 0.25 * t
+    w_hard = min(0.55, 0.20 + 0.35 * t)
+    w_gold = 0.10 + 0.15 * t
+    w_med = max(0.0, 1.0 - w_easy - w_hard - w_gold)
+    return w_easy, w_med, w_hard, w_gold
 
 
 def get_curriculum_ratios(step, total_steps):
     t = min(1.0, max(0.0, step / total_steps))
-    w_easy, w_med, w_hard = _smooth_tier_weights(t)
+    w_easy, w_med, w_hard, w_gold = _smooth_tier_weights(t)
     # G2: cyclic review wave — easy data gets a periodic boost
     cycle = max(1, total_steps // 8)
     review = 0.12 * (0.5 - 0.5 * math.cos(2 * math.pi * step / cycle))
     w_easy = min(0.5, w_easy + review)
-    s = w_easy + w_med + w_hard
-    w_easy, w_med, w_hard = w_easy / s, w_med / s, w_hard / s
+    s = w_easy + w_med + w_hard + w_gold
+    w_easy, w_med, w_hard, w_gold = w_easy / s, w_med / s, w_hard / s, w_gold / s
 
     ratios = {}
     for dom, frac in EASY_SPLIT.items():
@@ -131,6 +144,8 @@ def get_curriculum_ratios(step, total_steps):
         ratios[dom] = round(w_med * frac, 4)
     for dom, frac in HARD_SPLIT.items():
         ratios[dom] = round(w_hard * frac, 4)
+    for dom, frac in GOLD_SPLIT.items():
+        ratios[dom] = round(w_gold * frac, 4)
 
     boost = {}
     try:
@@ -140,14 +155,14 @@ def get_curriculum_ratios(step, total_steps):
     except Exception:
         boost = {}
     tier_totals = {}
-    for tier in ("_easy", "_medium", "_hard"):
+    for tier in ("_easy", "_medium", "_hard", "_gold"):
         tier_totals[tier] = sum(v for k, v in ratios.items() if DOMAIN_TIER.get(k) == tier)
     for dom in ratios:
         dom_boost = WEB_BOOST if dom.startswith("web") else 1.0
         dom_boost = boost.get(dom, dom_boost)
         ratios[dom] = round(ratios[dom] * dom_boost, 4)
     if WEB_BOOST != 1.0 or boost:
-        for tier in ("_easy", "_medium", "_hard"):
+        for tier in ("_easy", "_medium", "_hard", "_gold"):
             doms = [d for d in ratios if DOMAIN_TIER.get(d) == tier]
             s = sum(ratios[d] for d in doms)
             if s <= 0:
@@ -163,9 +178,55 @@ def get_curriculum_ratios(step, total_steps):
     return {k: v for k, v in ratios.items() if v > 0}
 
 
-def _load_shard_list(shards_dir: Path, seq_len: int):
+def _balanced_shard_subset(shard_paths, max_shards: int):
+    """Deterministically pick ~max_shards shards, balanced across languages.
+
+    Shards are named ``<prefix>-<lang>-<NNNNN>.bin``. Taking a plain sorted
+    prefix would over-sample the alphabetically-first languages (cpp/cs), so we
+    round-robin over language groups after a stable md5 shuffle within each
+    group. Fully reproducible for a given directory listing.
+    """
+    if max_shards <= 0 or len(shard_paths) <= max_shards:
+        return shard_paths
+    groups = {}
+    for p in shard_paths:
+        parts = p.stem.split("-")
+        lang = parts[1] if len(parts) >= 3 else p.stem
+        groups.setdefault(lang, []).append(p)
+    for lang in groups:
+        groups[lang].sort(key=lambda p: hashlib.md5(str(p).encode()).hexdigest())
+    langs = sorted(groups)
+    picked, i = [], 0
+    while len(picked) < max_shards:
+        progressed = False
+        for lang in langs:
+            if i < len(groups[lang]):
+                picked.append(groups[lang][i])
+                progressed = True
+                if len(picked) >= max_shards:
+                    break
+        if not progressed:
+            break
+        i += 1
+    return sorted(picked)
+
+
+def _load_shard_list(shards_dir: Path, seq_len: int, max_shards: int = 0,
+                     val_frac: float = 0.0):
+    """Index a tier directory, optionally holding out val shards and capping size.
+
+    Holdout happens BEFORE the cap so validation shards are never trained on.
+    Returns (entries, total_sequences, val_shard_paths).
+    """
     shard_paths = sorted(shards_dir.glob("*.bin"))
     shard_paths = [p for p in shard_paths if p.stat().st_size > 0]
+    val_shards = []
+    if val_frac > 0 and shard_paths:
+        ordered = sorted(shard_paths, key=lambda p: hashlib.md5(str(p).encode()).hexdigest())
+        n_val = max(1, int(len(ordered) * val_frac))
+        val_shards = ordered[-n_val:]
+        shard_paths = ordered[:-n_val]
+    shard_paths = _balanced_shard_subset(shard_paths, max_shards)
     entries = []
     total = 0
     for p in shard_paths:
@@ -179,7 +240,7 @@ def _load_shard_list(shards_dir: Path, seq_len: int):
             continue
         entries.append((p, n_seqs, total))
         total += n_seqs
-    return entries, total
+    return entries, total, val_shards
 
 
 def _hash_13gram(tokens: np.ndarray) -> int:
@@ -199,24 +260,33 @@ class StratifiedShardDataset(Dataset):
     """
 
     def __init__(self, shard_dirs: dict, seq_len: int = 2048,
-                 ratios: dict = None, dedup: bool = False):
+                 ratios: dict = None, dedup: bool = False,
+                 max_shards_per_tier: int = 0):
         self.seq_len = seq_len
         self.ratios = ratios or {}
         self.domains = []
         self.domain_entries = {}
         self.domain_totals = {}
+        self.pool_meta = {}
         grand_total = 0
 
         for domain, dpath in shard_dirs.items():
             if not dpath.exists():
                 print(f"  ! curriculum: shard dir missing '{domain}': {dpath} — skipping")
                 continue
-            entries, total = _load_shard_list(dpath, seq_len)
+            entries, total, val_shards = _load_shard_list(
+                dpath, seq_len, max_shards_per_tier, val_frac=0.01)
             if total == 0:
                 continue
             self.domains.append(domain)
             self.domain_entries[domain] = entries
             self.domain_totals[domain] = total
+            self.pool_meta[domain] = {
+                "dir": str(dpath),
+                "n_shards": len(entries),
+                "tokens": sum(p.stat().st_size // 2 for p, _, _ in entries),
+                "val_shards": [str(p) for p in val_shards],
+            }
             grand_total += total
 
         if not self.domains:
@@ -348,7 +418,8 @@ def build_curriculum_dataloader(cfg, is_val=False, ratios=None):
     if ratios is None:
         ratios = get_curriculum_ratios(0, cfg.max_steps)
     ds = StratifiedShardDataset(SHARD_DIRS, seq_len=cfg.seq_len,
-                                ratios=ratios, dedup=cfg.dedup)
+                                ratios=ratios, dedup=cfg.dedup,
+                                max_shards_per_tier=cfg.max_shards_per_tier)
     dl = DataLoader(ds, batch_size=cfg.batch_size, shuffle=False,
                     collate_fn=_collate_curriculum, num_workers=8, pin_memory=True,
                     persistent_workers=True, prefetch_factor=4)
@@ -414,7 +485,8 @@ class TrainConfig:
     max_grad_norm: float = 1.0
     beta1: float = 0.9
     beta2: float = 0.95
-    save_every: int = 2000
+    save_every: int = 0
+    save_every_minutes: int = 20
     log_every: int = 10
     mtp_weight: float = 0.1
     use_checkpoint: bool = True  # gradient checkpoint MHC layers (cuts long-seq VRAM)
@@ -423,6 +495,7 @@ class TrainConfig:
     dtype: str = "bfloat16"
     curriculum: bool = False  # DoReMi-lite G1-G4 stratified dynamic mix
     dedup: bool = False       # drop near-duplicate 13-gram sequences
+    max_shards_per_tier: int = 256  # cap shards/tier (0 = use every shard)
 
 
 def _compile_model(model):
@@ -512,12 +585,18 @@ def main():
     ap.add_argument("--data-dir", default="/home/kenpeter/work/data/_shards_final")
     ap.add_argument("--checkpoint-dir", default="/home/kenpeter/work/coder/checkpoints/san",
                    help="per user rule: checkpoints live INSIDE the project dir, not /work/checkpoints")
-    ap.add_argument("--save-every", type=int, default=2000)
+    ap.add_argument("--save-every", type=int, default=0,
+                   help="save every N steps (0 = time-based only)")
+    ap.add_argument("--save-every-minutes", type=int, default=20,
+                   help="save latest checkpoint every N wall-clock minutes")
     ap.add_argument("--resume")
     ap.add_argument("--curriculum", action="store_true",
                     help="use DoReMi-lite G1-G4 stratified dynamic mix instead of flat farm")
     ap.add_argument("--dedup", action="store_true",
                     help="drop exact/near-duplicate 13-gram sequences (slower startup, cleaner data)")
+    ap.add_argument("--max-shards-per-tier", type=int, default=256,
+                    help="cap shards loaded per curriculum tier (0 = all); keeps the "
+                         "epoch order / dedup index in RAM while still spanning all languages")
     ap.add_argument("--no-checkpoint", action="store_true",
                     help="disable grad-checkpointing (MHC layers) — faster compute, more VRAM")
     ap.add_argument("--ckpt-every", type=int, default=3,
@@ -534,7 +613,9 @@ def main():
         max_steps=args.steps, batch_size=args.batch_size, grad_accum=args.grad_accum,
         lr=args.lr, seq_len=args.seq_len, mtp_weight=args.mtp_weight,
         data_dir=args.data_dir, checkpoint_dir=args.checkpoint_dir,
-        save_every=args.save_every,        curriculum=args.curriculum, dedup=args.dedup,
+        save_every=args.save_every,        save_every_minutes=args.save_every_minutes,
+        curriculum=args.curriculum, dedup=args.dedup,
+        max_shards_per_tier=args.max_shards_per_tier,
         use_checkpoint=not args.no_checkpoint, log_every=args.log_every)
 
     # ---- resume-safe architecture overrides ----
@@ -595,6 +676,30 @@ def main():
     print(f"Data: {'curriculum' if cfg.curriculum else 'flat farm'}  sources={n_shards}  "
           f"steps={cfg.max_steps}  eff_batch={cfg.batch_size*cfg.grad_accum}")
 
+    # Persist what the run is actually training on, so external progress
+    # reporting (cron) can compute data-consumed % without guessing.
+    if cfg.curriculum and hasattr(ds, "pool_meta"):
+        pool_tokens = sum(m["tokens"] for m in ds.pool_meta.values())
+        meta = {
+            "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "curriculum": True,
+            "max_shards_per_tier": cfg.max_shards_per_tier,
+            "seq_len": cfg.seq_len,
+            "batch_size": cfg.batch_size,
+            "grad_accum": cfg.grad_accum,
+            "tokens_per_step": cfg.batch_size * cfg.grad_accum * cfg.seq_len,
+            "pool_tokens": pool_tokens,
+            "pool_epochs_total": pool_tokens / (cfg.batch_size * cfg.grad_accum * cfg.seq_len),
+            "tiers": ds.pool_meta,
+            "ratios_initial": get_curriculum_ratios(start_step, cfg.max_steps),
+        }
+        with open(os.path.join(cfg.checkpoint_dir, "run_meta.json"), "w") as f:
+            json.dump(meta, f, indent=2)
+        for dom, m in ds.pool_meta.items():
+            print(f"  📚 {dom:<12} shards={m['n_shards']:<4} tokens={m['tokens']/1e9:.2f}B")
+        print(f"  📚 curriculum pool: {pool_tokens/1e9:.2f}B tokens "
+              f"({meta['pool_epochs_total']:.0f} epochs of the 1M-step plan)")
+
     next_glide = CURRICULUM_UPDATE_INTERVAL if cfg.curriculum else None
 
     import signal as _signal
@@ -616,6 +721,7 @@ def main():
         print(f"  💾 saved latest (step {step}) -> {latest_path}")
 
     t0 = time.time()
+    last_save_time = time.time()
     running = 0.0
     step = start_step
     while step < cfg.max_steps:
@@ -696,8 +802,13 @@ def main():
             running, acc_main, acc_mtp = 0.0, 0.0, 0.0
             acc_dom_loss, acc_dom_n = {}, {}
 
-        if step % cfg.save_every == 0 or step == cfg.max_steps:
+        _now = time.time()
+        _interval = cfg.save_every_minutes * 60
+        if (step == cfg.max_steps or _stop['v']
+                or (cfg.save_every > 0 and step % cfg.save_every == 0)
+                or (_interval > 0 and _now - last_save_time >= _interval)):
             save_checkpoint(step)
+            last_save_time = _now
 
     print("✅ done")
 

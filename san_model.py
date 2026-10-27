@@ -14,6 +14,7 @@ JAX source:
 from fixed_softmax import softmax
 from dataclasses import dataclass
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

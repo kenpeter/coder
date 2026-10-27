@@ -8,3 +8,9 @@ _wire.sh
 _smoke/
 .venv/
 .swarm/
+
+# training artifacts (large / regenerated)
+checkpoints/
+*.log
+eval_data/
+eval_results/

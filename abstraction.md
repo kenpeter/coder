@@ -48,15 +48,15 @@ Training: target **1,000,000 steps**, GPU power cap **150 W** (max token/s on RT
 - **~60k tok/s** achieved with x-small + Muon + compile — up from ~26k tok/s on the 286M model with AdamW + no compile.
 - **VRAM headroom** at ~50% — batch could go higher but 8192 × 4 is the throughput sweet spot (larger batches hit quadratic attention cost).
 - **Power cap resets to ~285 W on reboot** — reapply `sudo nvidia-smi -pl 150` after restart.
-- **Resume is the normal path** — checkpoints every 30 min to `san_latest.pt`, resume from `trainer_state/trainer_state.pt`.
+- **Resume is the normal path** — checkpoints every 20 min to `san_latest.pt` (latest only, no other checkpoint files), resume from `san_latest.pt`.
 - **Checkpoint save requires SIGTERM** (saves at next step boundary then exits) — no save-and-keep-running signal.
 
-## Checkpointing — save every 30 minutes, overwrite old
+## Checkpointing — save every 20 minutes, overwrite old (latest only)
 | Setting | Value |
 |---|---|
-| Save interval | Every 30 minutes (wall-clock) |
-| Checkpoint file | `san_latest.pt` (overwrites previous) |
-| Trainer state | `trainer_state/trainer_state.pt` (saved every 60s for resume) |
+| Save interval | Every 20 minutes (wall-clock) |
+| Checkpoint file | `san_latest.pt` (overwrites previous; only checkpoint kept) |
+| Trainer state | none — only `san_latest.pt` is retained |
 | Resume from | `trainer_state.pt` — restores optimizer, RNG, step count |
 | Fresh start | No checkpoint → starts from initialization |
 
@@ -89,6 +89,25 @@ Training: target **1,000,000 steps**, GPU power cap **150 W** (max token/s on RT
 - **L2 = CPT pre-training**, L3 (gold) = SFT/mid-train (task→solution, completion-only loss on solution portion)
 - **Rotation:** Stage 1 CPT on L2; Stage 2 fixed 1:1 L2+L3 mix; Stage 3 L3 gold only
 - **Data loader:** Simple sequential chunking (no BOS markers in shards), restarts at document boundary for varlen packing
+
+### Curriculum actually in use (`--curriculum`)
+The 4-tier stratified loader mixes all tiers in every step instead of rotating
+stages. Tier weights glide linearly over the 1M-step plan:
+
+| step | easy | medium | hard | gold (L3) |
+|---|---|---|---|---|
+| 0 | 0.30 | 0.40 | 0.20 | 0.10 |
+| 500k | 0.175 | 0.275 | 0.375 | 0.175 |
+| 1M | 0.05 | 0.15 | 0.55 | 0.25 |
+
+- A G2 review wave adds up to +0.12 easy weight periodically (anti-forgetting).
+- `--max-shards-per-tier N` (default 256) caps each tier to a language-balanced,
+  md5-deterministic shard subset, so the epoch order / dedup index stays in RAM
+  while still spanning every language. Holdout (md5-last 1% per tier) happens
+  *before* the cap, so validation shards are never trained on.
+- The loader writes `checkpoints/san/run_meta.json` (pool tokens, per-tier
+  shards/tokens, val shards, initial ratios); the cron progress job reads it so
+  "data consumed %" uses the true denominator.
 
 ## SSD Rotation Plan (UltraData L2 code)
 SSD free ~291 GB; tiers ~150 GB (easy) + 114 GB (medium) + 135 GB (hard) = 399 GB,
