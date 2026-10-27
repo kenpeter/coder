@@ -292,15 +292,20 @@ class StratifiedShardDataset(Dataset):
         if not self.domains:
             raise FileNotFoundError("No valid shard directories found for curriculum")
 
-        self.index = []
+        # Memory-lean global index: two int32 arrays instead of a list of
+        # 3-tuples. A 25M-sequence pool costs ~300MB instead of ~3GB, which
+        # matters because DataLoader workers get their own copy under spawn.
+        self.index_dom = np.empty(grand_total, dtype=np.uint8)
+        self.index_local = np.empty(grand_total, dtype=np.int32)
         self.domain_offsets = {}
         cursor = 0
-        for domain in self.domains:
+        for di, domain in enumerate(self.domains):
             self.domain_offsets[domain] = cursor
             n = self.domain_totals[domain]
-            self.index.extend([(cursor + i, domain, i) for i in range(n)])
+            self.index_dom[cursor:cursor + n] = di
+            self.index_local[cursor:cursor + n] = np.arange(n, dtype=np.int32)
             cursor += n
-        self.raw_len = len(self.index)
+        self.raw_len = grand_total
 
         self.dedup = dedup
         self.valid_mask = None
@@ -323,7 +328,9 @@ class StratifiedShardDataset(Dataset):
         return mask
 
     def _fetch_tokens(self, global_idx: int, plus_one: bool = False) -> torch.Tensor:
-        _, domain, local_idx = self.index[global_idx]
+        di = int(self.index_dom[global_idx])
+        domain = self.domains[di]
+        local_idx = int(self.index_local[global_idx])
         length = self.seq_len + (1 if plus_one else 0)
         for shard_path, n_seqs, start_idx in self.domain_entries[domain]:
             if local_idx < start_idx + n_seqs:
@@ -343,46 +350,54 @@ class StratifiedShardDataset(Dataset):
                 return tokens
         raise IndexError(f"Bad index {global_idx}")
 
-    def _build_stratified_order(self):
-        valid_indices = torch.where(self.valid_mask)[0].tolist()
-        active_domains = [d for d in self.domains if d in self.ratios]
-        if not active_domains:
-            active_domains = self.domains[:]
-        buckets = {d: [] for d in active_domains}
-        for idx in valid_indices:
-            _, domain, _ = self.index[idx]
-            if domain in buckets:
-                buckets[domain].append(idx)
-        for d in active_domains:
-            random.shuffle(buckets[d])
+    def _build_stratified_order(self, epoch_len: int = 20_000_000):
+        """Build a ratio-balanced epoch order (numpy, O(n), ~1s for 20M).
 
-        self.epoch_order = []
-        ptrs = {d: 0 for d in active_domains}
-        total_valid = len(valid_indices)
+        Each epoch samples `epoch_len` windows with per-tier proportions taken
+        from self.ratios (rounded), shuffled globally so every local window
+        mixes tiers. Tiers are reused round-robin when the request exceeds the
+        tier size, so a small gold pool still gets 25% of the batches.
+        """
+        active = {d: self.ratios[d] for d in self.domains
+                  if self.ratios.get(d, 0) > 0}
+        if not active:
+            raise RuntimeError("All domain ratios are zero — cannot build epoch order")
+        total_valid = int(self.valid_mask.sum())
+        n = min(epoch_len, total_valid)
 
-        min_ratio = min(self.ratios[d] for d in active_domains) if active_domains else 1.0
-        if min_ratio <= 0:
-            active_domains = [d for d in active_domains if self.ratios[d] > 0]
-            if not active_domains:
-                raise RuntimeError("All domain ratios are zero — cannot build epoch order")
-            min_ratio = min(self.ratios[d] for d in active_domains)
+        # Per-tier global indices, shuffled once per rebuild.
+        pools = {}
+        for di, dom in enumerate(self.domains):
+            start = self.domain_offsets[dom]
+            idx = np.arange(start, start + self.domain_totals[dom], dtype=np.int64)
+            mask = self.valid_mask.numpy()[idx]
+            idx = idx[mask]
+            np.random.shuffle(idx)
+            pools[dom] = idx
 
-        while sum(ptrs[d] < len(buckets[d]) for d in active_domains) > 0:
-            for domain in active_domains:
-                n_emit = max(1, round(self.ratios[domain] / min_ratio))
-                for _ in range(n_emit):
-                    if ptrs[domain] < len(buckets[domain]):
-                        self.epoch_order.append(buckets[domain][ptrs[domain]])
-                        ptrs[domain] += 1
-            if len(self.epoch_order) > total_valid * 2:
-                break
-        self.epoch_order = self.epoch_order[:total_valid]
+        doms = list(active)
+        total_r = sum(active.values())
+        counts = {d: int(round(n * active[d] / total_r)) for d in doms}
+        # Fix rounding drift so counts sum to n.
+        diff = n - sum(counts.values())
+        counts[max(doms, key=lambda d: counts[d])] += diff
 
-        jit_window = 5000
-        for i in range(0, len(self.epoch_order), jit_window):
-            chunk = self.epoch_order[i:i + jit_window]
-            random.shuffle(chunk)
-            self.epoch_order[i:i + jit_window] = chunk
+        labels = np.repeat(np.arange(len(doms), dtype=np.uint8),
+                           [counts[d] for d in doms])
+        np.random.shuffle(labels)
+
+        order = np.empty(n, dtype=np.int64)
+        for di, dom in enumerate(doms):
+            pos = np.flatnonzero(labels == di)
+            if pos.size == 0:
+                continue
+            src = pools[dom]
+            if src.size == 0:
+                raise RuntimeError(f"tier {dom} has no valid sequences")
+            reps = int(np.ceil(pos.size / src.size))
+            src = np.tile(src, reps)[:pos.size]
+            order[pos] = src
+        self.epoch_order = order
 
     def reweight(self, ratios: dict):
         """Hot-swap: update ratios and rebuild the stratified epoch order in place."""
@@ -393,11 +408,12 @@ class StratifiedShardDataset(Dataset):
         return len(self.epoch_order)
 
     def __getitem__(self, idx):
-        global_idx = self.epoch_order[idx]
+        global_idx = int(self.epoch_order[idx])
         toks = self._fetch_tokens(global_idx, plus_one=True)  # seq_len+1 window
         x = toks[:-1].contiguous()
         y = toks[1:].contiguous()
-        return {"input_ids": x, "labels": y, "domain": self.index[global_idx][1]}
+        return {"input_ids": x, "labels": y,
+                "domain": self.domains[int(self.index_dom[global_idx])]}
 
 
 def _collate_curriculum(batch):
@@ -495,7 +511,7 @@ class TrainConfig:
     dtype: str = "bfloat16"
     curriculum: bool = False  # DoReMi-lite G1-G4 stratified dynamic mix
     dedup: bool = False       # drop near-duplicate 13-gram sequences
-    max_shards_per_tier: int = 256  # cap shards/tier (0 = use every shard)
+    max_shards_per_tier: int = 128  # cap shards/tier (0 = use every shard)
 
 
 def _compile_model(model):
@@ -594,7 +610,7 @@ def main():
                     help="use DoReMi-lite G1-G4 stratified dynamic mix instead of flat farm")
     ap.add_argument("--dedup", action="store_true",
                     help="drop exact/near-duplicate 13-gram sequences (slower startup, cleaner data)")
-    ap.add_argument("--max-shards-per-tier", type=int, default=256,
+    ap.add_argument("--max-shards-per-tier", type=int, default=128,
                     help="cap shards loaded per curriculum tier (0 = all); keeps the "
                          "epoch order / dedup index in RAM while still spanning all languages")
     ap.add_argument("--no-checkpoint", action="store_true",
@@ -680,6 +696,7 @@ def main():
     # reporting (cron) can compute data-consumed % without guessing.
     if cfg.curriculum and hasattr(ds, "pool_meta"):
         pool_tokens = sum(m["tokens"] for m in ds.pool_meta.values())
+        tps = cfg.batch_size * cfg.grad_accum * cfg.seq_len
         meta = {
             "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "curriculum": True,
@@ -687,9 +704,9 @@ def main():
             "seq_len": cfg.seq_len,
             "batch_size": cfg.batch_size,
             "grad_accum": cfg.grad_accum,
-            "tokens_per_step": cfg.batch_size * cfg.grad_accum * cfg.seq_len,
+            "tokens_per_step": tps,
             "pool_tokens": pool_tokens,
-            "pool_epochs_total": pool_tokens / (cfg.batch_size * cfg.grad_accum * cfg.seq_len),
+            "pool_steps": pool_tokens // tps,
             "tiers": ds.pool_meta,
             "ratios_initial": get_curriculum_ratios(start_step, cfg.max_steps),
         }
@@ -698,7 +715,8 @@ def main():
         for dom, m in ds.pool_meta.items():
             print(f"  📚 {dom:<12} shards={m['n_shards']:<4} tokens={m['tokens']/1e9:.2f}B")
         print(f"  📚 curriculum pool: {pool_tokens/1e9:.2f}B tokens "
-              f"({meta['pool_epochs_total']:.0f} epochs of the 1M-step plan)")
+              f"({meta['pool_steps']:,} steps/pass; 1M-step plan = "
+              f"{100.0*cfg.max_steps/max(1,meta['pool_steps']):.0f}% of the pool)")
 
     next_glide = CURRICULUM_UPDATE_INTERVAL if cfg.curriculum else None
 
