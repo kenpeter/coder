@@ -127,6 +127,36 @@ def _smooth_tier_weights(t):
     return w_easy, w_med, w_hard, w_gold
 
 
+CURRICULUM_STAGES = (
+    (0.20, "S1/5 easy-heavy warmup"),
+    (0.40, "S2/5 balanced, hard rising"),
+    (0.60, "S3/5 balanced, hard rising"),
+    (0.80, "S4/5 hard+gold building"),
+    (1.01, "S5/5 hard+gold finish"),
+)
+
+
+def curriculum_stage(step, total_steps):
+    """Return (label, t, progress-within-stage) for the 5-stage schedule."""
+    t = min(1.0, max(0.0, step / max(1, total_steps)))
+    lo = 0.0
+    for edge, label in CURRICULUM_STAGES:
+        if t < edge:
+            span = edge - lo
+            return label, t, ((t - lo) / span if span > 0 else 1.0)
+        lo = edge
+    return CURRICULUM_STAGES[-1][1], 1.0, 1.0
+
+
+def tier_percents(ratios):
+    """Collapse per-domain ratios into per-tier percentages (easy/medium/hard/gold)."""
+    out = {}
+    for dom, w in ratios.items():
+        tier = DOMAIN_TIER.get(dom, "other").lstrip("_")
+        out[tier] = out.get(tier, 0.0) + w
+    return {k: round(100.0 * v, 1) for k, v in out.items()}
+
+
 def get_curriculum_ratios(step, total_steps):
     t = min(1.0, max(0.0, step / total_steps))
     w_easy, w_med, w_hard, w_gold = _smooth_tier_weights(t)
@@ -176,6 +206,35 @@ def get_curriculum_ratios(step, total_steps):
     if abs(total - 1.0) > 1e-9:
         ratios[max(ratios, key=ratios.get)] += 1.0 - total
     return {k: v for k, v in ratios.items() if v > 0}
+
+
+RUN_META_NAME = "run_meta.json"
+
+
+def _write_run_meta(cfg, step, ratios=None):
+    """Refresh step / current mix / stage in run_meta.json (cron reads this)."""
+    path = Path(cfg.checkpoint_dir) / RUN_META_NAME
+    try:
+        with open(path) as f:
+            meta = json.load(f)
+    except Exception:
+        return
+    if ratios is None:
+        ratios = get_curriculum_ratios(step, cfg.max_steps)
+    label, t, frac = curriculum_stage(step, cfg.max_steps)
+    meta.update({
+        "step": step,
+        "plan_pct": round(100.0 * t, 2),
+        "ratios_current": ratios,
+        "tier_pct": tier_percents(ratios),
+        "stage": label,
+        "stage_progress": round(frac, 3),
+        "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    })
+    tmp = str(path) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(meta, f, indent=2)
+    os.replace(tmp, path)
 
 
 def _balanced_shard_subset(shard_paths, max_shards: int):
@@ -712,6 +771,7 @@ def main():
         }
         with open(os.path.join(cfg.checkpoint_dir, "run_meta.json"), "w") as f:
             json.dump(meta, f, indent=2)
+        _write_run_meta(cfg, start_step)
         for dom, m in ds.pool_meta.items():
             print(f"  📚 {dom:<12} shards={m['n_shards']:<4} tokens={m['tokens']/1e9:.2f}B")
         print(f"  📚 curriculum pool: {pool_tokens/1e9:.2f}B tokens "
@@ -755,9 +815,10 @@ def main():
             new_ratios = get_curriculum_ratios(step, cfg.max_steps)
             ds.reweight(new_ratios)
             train_iter = iter(train_loader)
-            print(f"  🔄 curriculum re-glide @ step {step}: "
-                  f"{sum(1 for v in new_ratios.values() if v > 0)} active domains, "
-                  f"epoch_order={len(ds)}")
+            _write_run_meta(cfg, step, new_ratios)
+            mix = " ".join(f"{k}={v:g}" for k, v in new_ratios.items())
+            print(f"  🔄 curriculum re-glide @ step {step}: {mix} "
+                  f"({len(ds)} epoch samples)")
             next_glide = step + CURRICULUM_UPDATE_INTERVAL
 
         lr = get_lr(step, cfg.warmup_steps, cfg.max_steps, cfg.lr, cfg.min_lr)
