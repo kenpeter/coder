@@ -11,10 +11,9 @@ JAX source:
   - MTP               (multi-token-prediction head)
   - Tied embeddings + causal/packing mask
 """
-from fixed_softmax import softmax
+import math
 from dataclasses import dataclass
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -306,7 +305,7 @@ def probe_pool(cells, probes, keep=None, dtype=torch.bfloat16):
     scores = torch.einsum("bcd,kd->bkc", cells.float(), probes.float()) / math.sqrt(d)
     if keep is not None:
         scores = torch.where(keep[:, None, :] > 0, scores, float("-inf"))
-    w = softmax(scores, dim=-1)
+    w = torch.softmax(scores, dim=-1)
     return torch.einsum("bkc,bcd->bkd", w, cells.float()).reshape(b, -1).to(dtype)
 
 

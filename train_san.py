@@ -9,7 +9,7 @@ Checkpointing follows the user rule: NEVER save best.pt — always latest (resum
 always from latest). Dataset: flat farm (_shards_final) by default, or the
 stratifed domain-tiered curriculum (ported from small) via --curriculum.
 """
-import argparse, hashlib, json, math, os, random, time
+import argparse, json, math, os, random, time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,84 +88,44 @@ def build_dataloader(cfg, is_val=False):
 # ============================================================================
 
 SHARD_DIRS = {
-    "code_easy":   Path("/home/kenpeter/work/data/_shards_code_easy"),
-    "code_medium": Path("/home/kenpeter/work/data/_shards_code_medium"),
-    "code_hard":   Path("/home/kenpeter/work/data/_shards_code_hard"),
-    "code_gold":   Path("/home/kenpeter/work/data/_shards_code_gold"),
+    "code_easy":   Path("/home/kenpeter/work/data/_cur_code/easy"),
+    "code_medium": Path("/home/kenpeter/work/data/_cur_code/medium"),
+    "code_hard":   Path("/home/kenpeter/work/data/_cur_code/hard"),
+    "code_gold":   Path("/home/kenpeter/work/data/_cur_code/gold"),
 }
 
 CURRICULUM_UPDATE_INTERVAL = 2000  # steps between ratio rebuilds
 
-# L2 tiers are per-language quality quantiles (easy = bottom third, hard = top
-# third). L3 gold is instruction-style task/analysis/solution/test data — the
-# most useful signal for HumanEval-like "docstring -> implementation" tasks.
 EASY_SPLIT = {"code_easy": 1.0}
 MED_SPLIT = {"code_medium": 1.0}
-HARD_SPLIT = {"code_hard": 1.0}
-GOLD_SPLIT = {"code_gold": 1.0}
+HARD_SPLIT = {"code_hard": 0.7, "code_gold": 0.3}
 
 DOMAIN_TIER = {}
 for _d in EASY_SPLIT:   DOMAIN_TIER[_d] = "_easy"
 for _d in MED_SPLIT:    DOMAIN_TIER[_d] = "_medium"
 for _d in HARD_SPLIT:   DOMAIN_TIER[_d] = "_hard"
-for _d in GOLD_SPLIT:   DOMAIN_TIER[_d] = "_gold"
 
 WEB_BOOST = 1.5
 WEB_BOOST_FILE = Path(__file__).parent / "curriculum_boost.json"
 
 
 def _smooth_tier_weights(t):
-    """Boundary-sharpening schedule (t in [0,1]):
-    easy 0.30 -> 0.05, medium 0.40 -> 0.15, hard 0.20 -> 0.55, gold 0.10 -> 0.25.
-    Gold is present from the start so instruction-style code is never absent.
-    """
-    t = min(1.0, max(0.0, t))
-    w_easy = 0.30 - 0.25 * t
-    w_hard = min(0.55, 0.20 + 0.35 * t)
-    w_gold = 0.10 + 0.15 * t
-    w_med = max(0.0, 1.0 - w_easy - w_hard - w_gold)
-    return w_easy, w_med, w_hard, w_gold
-
-
-CURRICULUM_STAGES = (
-    (0.20, "S1/5 easy-heavy warmup"),
-    (0.40, "S2/5 balanced, hard rising"),
-    (0.60, "S3/5 balanced, hard rising"),
-    (0.80, "S4/5 hard+gold building"),
-    (1.01, "S5/5 hard+gold finish"),
-)
-
-
-def curriculum_stage(step, total_steps):
-    """Return (label, t, progress-within-stage) for the 5-stage schedule."""
-    t = min(1.0, max(0.0, step / max(1, total_steps)))
-    lo = 0.0
-    for edge, label in CURRICULUM_STAGES:
-        if t < edge:
-            span = edge - lo
-            return label, t, ((t - lo) / span if span > 0 else 1.0)
-        lo = edge
-    return CURRICULUM_STAGES[-1][1], 1.0, 1.0
-
-
-def tier_percents(ratios):
-    """Collapse per-domain ratios into per-tier percentages (easy/medium/hard/gold)."""
-    out = {}
-    for dom, w in ratios.items():
-        tier = DOMAIN_TIER.get(dom, "other").lstrip("_")
-        out[tier] = out.get(tier, 0.0) + w
-    return {k: round(100.0 * v, 1) for k, v in out.items()}
+    tt = t if t < 0.5 else 1.0 - t
+    w_easy = 0.05 + 0.25 * (1 - tt)
+    w_hard = min(0.70, 0.25 + 0.45 * tt)
+    w_med = max(0.0, 1.0 - w_easy - w_hard)
+    return w_easy, w_med, w_hard
 
 
 def get_curriculum_ratios(step, total_steps):
     t = min(1.0, max(0.0, step / total_steps))
-    w_easy, w_med, w_hard, w_gold = _smooth_tier_weights(t)
+    w_easy, w_med, w_hard = _smooth_tier_weights(t)
     # G2: cyclic review wave — easy data gets a periodic boost
     cycle = max(1, total_steps // 8)
     review = 0.12 * (0.5 - 0.5 * math.cos(2 * math.pi * step / cycle))
     w_easy = min(0.5, w_easy + review)
-    s = w_easy + w_med + w_hard + w_gold
-    w_easy, w_med, w_hard, w_gold = w_easy / s, w_med / s, w_hard / s, w_gold / s
+    s = w_easy + w_med + w_hard
+    w_easy, w_med, w_hard = w_easy / s, w_med / s, w_hard / s
 
     ratios = {}
     for dom, frac in EASY_SPLIT.items():
@@ -174,8 +134,6 @@ def get_curriculum_ratios(step, total_steps):
         ratios[dom] = round(w_med * frac, 4)
     for dom, frac in HARD_SPLIT.items():
         ratios[dom] = round(w_hard * frac, 4)
-    for dom, frac in GOLD_SPLIT.items():
-        ratios[dom] = round(w_gold * frac, 4)
 
     boost = {}
     try:
@@ -185,14 +143,14 @@ def get_curriculum_ratios(step, total_steps):
     except Exception:
         boost = {}
     tier_totals = {}
-    for tier in ("_easy", "_medium", "_hard", "_gold"):
+    for tier in ("_easy", "_medium", "_hard"):
         tier_totals[tier] = sum(v for k, v in ratios.items() if DOMAIN_TIER.get(k) == tier)
     for dom in ratios:
         dom_boost = WEB_BOOST if dom.startswith("web") else 1.0
         dom_boost = boost.get(dom, dom_boost)
         ratios[dom] = round(ratios[dom] * dom_boost, 4)
     if WEB_BOOST != 1.0 or boost:
-        for tier in ("_easy", "_medium", "_hard", "_gold"):
+        for tier in ("_easy", "_medium", "_hard"):
             doms = [d for d in ratios if DOMAIN_TIER.get(d) == tier]
             s = sum(ratios[d] for d in doms)
             if s <= 0:
@@ -208,84 +166,9 @@ def get_curriculum_ratios(step, total_steps):
     return {k: v for k, v in ratios.items() if v > 0}
 
 
-RUN_META_NAME = "run_meta.json"
-
-
-def _write_run_meta(cfg, step, ratios=None):
-    """Refresh step / current mix / stage in run_meta.json (cron reads this)."""
-    path = Path(cfg.checkpoint_dir) / RUN_META_NAME
-    try:
-        with open(path) as f:
-            meta = json.load(f)
-    except Exception:
-        return
-    if ratios is None:
-        ratios = get_curriculum_ratios(step, cfg.max_steps)
-    label, t, frac = curriculum_stage(step, cfg.max_steps)
-    meta.update({
-        "step": step,
-        "plan_pct": round(100.0 * t, 2),
-        "ratios_current": ratios,
-        "tier_pct": tier_percents(ratios),
-        "stage": label,
-        "stage_progress": round(frac, 3),
-        "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    })
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(meta, f, indent=2)
-    os.replace(tmp, path)
-
-
-def _balanced_shard_subset(shard_paths, max_shards: int):
-    """Deterministically pick ~max_shards shards, balanced across languages.
-
-    Shards are named ``<prefix>-<lang>-<NNNNN>.bin``. Taking a plain sorted
-    prefix would over-sample the alphabetically-first languages (cpp/cs), so we
-    round-robin over language groups after a stable md5 shuffle within each
-    group. Fully reproducible for a given directory listing.
-    """
-    if max_shards <= 0 or len(shard_paths) <= max_shards:
-        return shard_paths
-    groups = {}
-    for p in shard_paths:
-        parts = p.stem.split("-")
-        lang = parts[1] if len(parts) >= 3 else p.stem
-        groups.setdefault(lang, []).append(p)
-    for lang in groups:
-        groups[lang].sort(key=lambda p: hashlib.md5(str(p).encode()).hexdigest())
-    langs = sorted(groups)
-    picked, i = [], 0
-    while len(picked) < max_shards:
-        progressed = False
-        for lang in langs:
-            if i < len(groups[lang]):
-                picked.append(groups[lang][i])
-                progressed = True
-                if len(picked) >= max_shards:
-                    break
-        if not progressed:
-            break
-        i += 1
-    return sorted(picked)
-
-
-def _load_shard_list(shards_dir: Path, seq_len: int, max_shards: int = 0,
-                     val_frac: float = 0.0):
-    """Index a tier directory, optionally holding out val shards and capping size.
-
-    Holdout happens BEFORE the cap so validation shards are never trained on.
-    Returns (entries, total_sequences, val_shard_paths).
-    """
+def _load_shard_list(shards_dir: Path, seq_len: int):
     shard_paths = sorted(shards_dir.glob("*.bin"))
     shard_paths = [p for p in shard_paths if p.stat().st_size > 0]
-    val_shards = []
-    if val_frac > 0 and shard_paths:
-        ordered = sorted(shard_paths, key=lambda p: hashlib.md5(str(p).encode()).hexdigest())
-        n_val = max(1, int(len(ordered) * val_frac))
-        val_shards = ordered[-n_val:]
-        shard_paths = ordered[:-n_val]
-    shard_paths = _balanced_shard_subset(shard_paths, max_shards)
     entries = []
     total = 0
     for p in shard_paths:
@@ -299,7 +182,7 @@ def _load_shard_list(shards_dir: Path, seq_len: int, max_shards: int = 0,
             continue
         entries.append((p, n_seqs, total))
         total += n_seqs
-    return entries, total, val_shards
+    return entries, total
 
 
 def _hash_13gram(tokens: np.ndarray) -> int:
@@ -319,52 +202,38 @@ class StratifiedShardDataset(Dataset):
     """
 
     def __init__(self, shard_dirs: dict, seq_len: int = 2048,
-                 ratios: dict = None, dedup: bool = False,
-                 max_shards_per_tier: int = 0):
+                 ratios: dict = None, dedup: bool = False):
         self.seq_len = seq_len
         self.ratios = ratios or {}
         self.domains = []
         self.domain_entries = {}
         self.domain_totals = {}
-        self.pool_meta = {}
         grand_total = 0
 
         for domain, dpath in shard_dirs.items():
             if not dpath.exists():
                 print(f"  ! curriculum: shard dir missing '{domain}': {dpath} — skipping")
                 continue
-            entries, total, val_shards = _load_shard_list(
-                dpath, seq_len, max_shards_per_tier, val_frac=0.01)
+            entries, total = _load_shard_list(dpath, seq_len)
             if total == 0:
                 continue
             self.domains.append(domain)
             self.domain_entries[domain] = entries
             self.domain_totals[domain] = total
-            self.pool_meta[domain] = {
-                "dir": str(dpath),
-                "n_shards": len(entries),
-                "tokens": sum(p.stat().st_size // 2 for p, _, _ in entries),
-                "val_shards": [str(p) for p in val_shards],
-            }
             grand_total += total
 
         if not self.domains:
             raise FileNotFoundError("No valid shard directories found for curriculum")
 
-        # Memory-lean global index: two int32 arrays instead of a list of
-        # 3-tuples. A 25M-sequence pool costs ~300MB instead of ~3GB, which
-        # matters because DataLoader workers get their own copy under spawn.
-        self.index_dom = np.empty(grand_total, dtype=np.uint8)
-        self.index_local = np.empty(grand_total, dtype=np.int32)
+        self.index = []
         self.domain_offsets = {}
         cursor = 0
-        for di, domain in enumerate(self.domains):
+        for domain in self.domains:
             self.domain_offsets[domain] = cursor
             n = self.domain_totals[domain]
-            self.index_dom[cursor:cursor + n] = di
-            self.index_local[cursor:cursor + n] = np.arange(n, dtype=np.int32)
+            self.index.extend([(cursor + i, domain, i) for i in range(n)])
             cursor += n
-        self.raw_len = grand_total
+        self.raw_len = len(self.index)
 
         self.dedup = dedup
         self.valid_mask = None
@@ -387,9 +256,7 @@ class StratifiedShardDataset(Dataset):
         return mask
 
     def _fetch_tokens(self, global_idx: int, plus_one: bool = False) -> torch.Tensor:
-        di = int(self.index_dom[global_idx])
-        domain = self.domains[di]
-        local_idx = int(self.index_local[global_idx])
+        _, domain, local_idx = self.index[global_idx]
         length = self.seq_len + (1 if plus_one else 0)
         for shard_path, n_seqs, start_idx in self.domain_entries[domain]:
             if local_idx < start_idx + n_seqs:
@@ -409,54 +276,46 @@ class StratifiedShardDataset(Dataset):
                 return tokens
         raise IndexError(f"Bad index {global_idx}")
 
-    def _build_stratified_order(self, epoch_len: int = 20_000_000):
-        """Build a ratio-balanced epoch order (numpy, O(n), ~1s for 20M).
+    def _build_stratified_order(self):
+        valid_indices = torch.where(self.valid_mask)[0].tolist()
+        active_domains = [d for d in self.domains if d in self.ratios]
+        if not active_domains:
+            active_domains = self.domains[:]
+        buckets = {d: [] for d in active_domains}
+        for idx in valid_indices:
+            _, domain, _ = self.index[idx]
+            if domain in buckets:
+                buckets[domain].append(idx)
+        for d in active_domains:
+            random.shuffle(buckets[d])
 
-        Each epoch samples `epoch_len` windows with per-tier proportions taken
-        from self.ratios (rounded), shuffled globally so every local window
-        mixes tiers. Tiers are reused round-robin when the request exceeds the
-        tier size, so a small gold pool still gets 25% of the batches.
-        """
-        active = {d: self.ratios[d] for d in self.domains
-                  if self.ratios.get(d, 0) > 0}
-        if not active:
-            raise RuntimeError("All domain ratios are zero — cannot build epoch order")
-        total_valid = int(self.valid_mask.sum())
-        n = min(epoch_len, total_valid)
+        self.epoch_order = []
+        ptrs = {d: 0 for d in active_domains}
+        total_valid = len(valid_indices)
 
-        # Per-tier global indices, shuffled once per rebuild.
-        pools = {}
-        for di, dom in enumerate(self.domains):
-            start = self.domain_offsets[dom]
-            idx = np.arange(start, start + self.domain_totals[dom], dtype=np.int64)
-            mask = self.valid_mask.numpy()[idx]
-            idx = idx[mask]
-            np.random.shuffle(idx)
-            pools[dom] = idx
+        min_ratio = min(self.ratios[d] for d in active_domains) if active_domains else 1.0
+        if min_ratio <= 0:
+            active_domains = [d for d in active_domains if self.ratios[d] > 0]
+            if not active_domains:
+                raise RuntimeError("All domain ratios are zero — cannot build epoch order")
+            min_ratio = min(self.ratios[d] for d in active_domains)
 
-        doms = list(active)
-        total_r = sum(active.values())
-        counts = {d: int(round(n * active[d] / total_r)) for d in doms}
-        # Fix rounding drift so counts sum to n.
-        diff = n - sum(counts.values())
-        counts[max(doms, key=lambda d: counts[d])] += diff
+        while sum(ptrs[d] < len(buckets[d]) for d in active_domains) > 0:
+            for domain in active_domains:
+                n_emit = max(1, round(self.ratios[domain] / min_ratio))
+                for _ in range(n_emit):
+                    if ptrs[domain] < len(buckets[domain]):
+                        self.epoch_order.append(buckets[domain][ptrs[domain]])
+                        ptrs[domain] += 1
+            if len(self.epoch_order) > total_valid * 2:
+                break
+        self.epoch_order = self.epoch_order[:total_valid]
 
-        labels = np.repeat(np.arange(len(doms), dtype=np.uint8),
-                           [counts[d] for d in doms])
-        np.random.shuffle(labels)
-
-        order = np.empty(n, dtype=np.int64)
-        for di, dom in enumerate(doms):
-            pos = np.flatnonzero(labels == di)
-            if pos.size == 0:
-                continue
-            src = pools[dom]
-            if src.size == 0:
-                raise RuntimeError(f"tier {dom} has no valid sequences")
-            reps = int(np.ceil(pos.size / src.size))
-            src = np.tile(src, reps)[:pos.size]
-            order[pos] = src
-        self.epoch_order = order
+        jit_window = 5000
+        for i in range(0, len(self.epoch_order), jit_window):
+            chunk = self.epoch_order[i:i + jit_window]
+            random.shuffle(chunk)
+            self.epoch_order[i:i + jit_window] = chunk
 
     def reweight(self, ratios: dict):
         """Hot-swap: update ratios and rebuild the stratified epoch order in place."""
@@ -467,12 +326,11 @@ class StratifiedShardDataset(Dataset):
         return len(self.epoch_order)
 
     def __getitem__(self, idx):
-        global_idx = int(self.epoch_order[idx])
+        global_idx = self.epoch_order[idx]
         toks = self._fetch_tokens(global_idx, plus_one=True)  # seq_len+1 window
         x = toks[:-1].contiguous()
         y = toks[1:].contiguous()
-        return {"input_ids": x, "labels": y,
-                "domain": self.domains[int(self.index_dom[global_idx])]}
+        return {"input_ids": x, "labels": y, "domain": self.index[global_idx][1]}
 
 
 def _collate_curriculum(batch):
@@ -493,8 +351,7 @@ def build_curriculum_dataloader(cfg, is_val=False, ratios=None):
     if ratios is None:
         ratios = get_curriculum_ratios(0, cfg.max_steps)
     ds = StratifiedShardDataset(SHARD_DIRS, seq_len=cfg.seq_len,
-                                ratios=ratios, dedup=cfg.dedup,
-                                max_shards_per_tier=cfg.max_shards_per_tier)
+                                ratios=ratios, dedup=cfg.dedup)
     dl = DataLoader(ds, batch_size=cfg.batch_size, shuffle=False,
                     collate_fn=_collate_curriculum, num_workers=8, pin_memory=True,
                     persistent_workers=True, prefetch_factor=4)
@@ -560,17 +417,15 @@ class TrainConfig:
     max_grad_norm: float = 1.0
     beta1: float = 0.9
     beta2: float = 0.95
-    save_every: int = 0
-    save_every_minutes: int = 20
+    save_every: int = 2000
     log_every: int = 10
     mtp_weight: float = 0.1
     use_checkpoint: bool = True  # gradient checkpoint MHC layers (cuts long-seq VRAM)
     data_dir: str = "/home/kenpeter/work/data/_shards_final"
-    checkpoint_dir: str = "/home/kenpeter/work/coder/checkpoints/san"  # inside project (user rule)
+    checkpoint_dir: str = "/home/kenpeter/work/x-small/checkpoints/san"  # inside project (user rule)
     dtype: str = "bfloat16"
     curriculum: bool = False  # DoReMi-lite G1-G4 stratified dynamic mix
     dedup: bool = False       # drop near-duplicate 13-gram sequences
-    max_shards_per_tier: int = 128  # cap shards/tier (0 = use every shard)
 
 
 def _compile_model(model):
@@ -658,20 +513,14 @@ def main():
     ap.add_argument("--log-every", type=int, default=10,
                    help="log a training line every N steps")
     ap.add_argument("--data-dir", default="/home/kenpeter/work/data/_shards_final")
-    ap.add_argument("--checkpoint-dir", default="/home/kenpeter/work/coder/checkpoints/san",
+    ap.add_argument("--checkpoint-dir", default="/home/kenpeter/work/x-small/checkpoints/san",
                    help="per user rule: checkpoints live INSIDE the project dir, not /work/checkpoints")
-    ap.add_argument("--save-every", type=int, default=0,
-                   help="save every N steps (0 = time-based only)")
-    ap.add_argument("--save-every-minutes", type=int, default=20,
-                   help="save latest checkpoint every N wall-clock minutes")
+    ap.add_argument("--save-every", type=int, default=2000)
     ap.add_argument("--resume")
     ap.add_argument("--curriculum", action="store_true",
                     help="use DoReMi-lite G1-G4 stratified dynamic mix instead of flat farm")
     ap.add_argument("--dedup", action="store_true",
                     help="drop exact/near-duplicate 13-gram sequences (slower startup, cleaner data)")
-    ap.add_argument("--max-shards-per-tier", type=int, default=128,
-                    help="cap shards loaded per curriculum tier (0 = all); keeps the "
-                         "epoch order / dedup index in RAM while still spanning all languages")
     ap.add_argument("--no-checkpoint", action="store_true",
                     help="disable grad-checkpointing (MHC layers) — faster compute, more VRAM")
     ap.add_argument("--ckpt-every", type=int, default=3,
@@ -688,9 +537,7 @@ def main():
         max_steps=args.steps, batch_size=args.batch_size, grad_accum=args.grad_accum,
         lr=args.lr, seq_len=args.seq_len, mtp_weight=args.mtp_weight,
         data_dir=args.data_dir, checkpoint_dir=args.checkpoint_dir,
-        save_every=args.save_every,        save_every_minutes=args.save_every_minutes,
-        curriculum=args.curriculum, dedup=args.dedup,
-        max_shards_per_tier=args.max_shards_per_tier,
+        save_every=args.save_every,        curriculum=args.curriculum, dedup=args.dedup,
         use_checkpoint=not args.no_checkpoint, log_every=args.log_every)
 
     # ---- resume-safe architecture overrides ----
@@ -709,8 +556,8 @@ def main():
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
 
-    tokenizer = AutoTokenizer.from_pretrained("bigcode/starcoder2-7b",
-                                              clean_up_tokenization_spaces=False)
+    tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-135M",
+                                              trust_remote_code=True)
     print(f"Tokenizer vocab: {len(tokenizer)}")
 
     san_cfg = SANConfig(vocab_size=cfg.vocab_size, d_model=cfg.d_model,
@@ -751,33 +598,6 @@ def main():
     print(f"Data: {'curriculum' if cfg.curriculum else 'flat farm'}  sources={n_shards}  "
           f"steps={cfg.max_steps}  eff_batch={cfg.batch_size*cfg.grad_accum}")
 
-    # Persist what the run is actually training on, so external progress
-    # reporting (cron) can compute data-consumed % without guessing.
-    if cfg.curriculum and hasattr(ds, "pool_meta"):
-        pool_tokens = sum(m["tokens"] for m in ds.pool_meta.values())
-        tps = cfg.batch_size * cfg.grad_accum * cfg.seq_len
-        meta = {
-            "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "curriculum": True,
-            "max_shards_per_tier": cfg.max_shards_per_tier,
-            "seq_len": cfg.seq_len,
-            "batch_size": cfg.batch_size,
-            "grad_accum": cfg.grad_accum,
-            "tokens_per_step": tps,
-            "pool_tokens": pool_tokens,
-            "pool_steps": pool_tokens // tps,
-            "tiers": ds.pool_meta,
-            "ratios_initial": get_curriculum_ratios(start_step, cfg.max_steps),
-        }
-        with open(os.path.join(cfg.checkpoint_dir, "run_meta.json"), "w") as f:
-            json.dump(meta, f, indent=2)
-        _write_run_meta(cfg, start_step)
-        for dom, m in ds.pool_meta.items():
-            print(f"  📚 {dom:<12} shards={m['n_shards']:<4} tokens={m['tokens']/1e9:.2f}B")
-        print(f"  📚 curriculum pool: {pool_tokens/1e9:.2f}B tokens "
-              f"({meta['pool_steps']:,} steps/pass; 1M-step plan = "
-              f"{100.0*cfg.max_steps/max(1,meta['pool_steps']):.0f}% of the pool)")
-
     next_glide = CURRICULUM_UPDATE_INTERVAL if cfg.curriculum else None
 
     import signal as _signal
@@ -799,7 +619,6 @@ def main():
         print(f"  💾 saved latest (step {step}) -> {latest_path}")
 
     t0 = time.time()
-    last_save_time = time.time()
     running = 0.0
     step = start_step
     while step < cfg.max_steps:
@@ -815,10 +634,9 @@ def main():
             new_ratios = get_curriculum_ratios(step, cfg.max_steps)
             ds.reweight(new_ratios)
             train_iter = iter(train_loader)
-            _write_run_meta(cfg, step, new_ratios)
-            mix = " ".join(f"{k}={v:g}" for k, v in new_ratios.items())
-            print(f"  🔄 curriculum re-glide @ step {step}: {mix} "
-                  f"({len(ds)} epoch samples)")
+            print(f"  🔄 curriculum re-glide @ step {step}: "
+                  f"{sum(1 for v in new_ratios.values() if v > 0)} active domains, "
+                  f"epoch_order={len(ds)}")
             next_glide = step + CURRICULUM_UPDATE_INTERVAL
 
         lr = get_lr(step, cfg.warmup_steps, cfg.max_steps, cfg.lr, cfg.min_lr)
@@ -881,13 +699,8 @@ def main():
             running, acc_main, acc_mtp = 0.0, 0.0, 0.0
             acc_dom_loss, acc_dom_n = {}, {}
 
-        _now = time.time()
-        _interval = cfg.save_every_minutes * 60
-        if (step == cfg.max_steps or _stop['v']
-                or (cfg.save_every > 0 and step % cfg.save_every == 0)
-                or (_interval > 0 and _now - last_save_time >= _interval)):
+        if step % cfg.save_every == 0 or step == cfg.max_steps:
             save_checkpoint(step)
-            last_save_time = _now
 
     print("✅ done")
 
