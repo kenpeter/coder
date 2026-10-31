@@ -88,16 +88,16 @@ def build_dataloader(cfg, is_val=False):
 # ============================================================================
 
 SHARD_DIRS = {
-    "code_easy":   Path("/home/kenpeter/work/data/_cur_code/easy"),
-    "code_medium": Path("/home/kenpeter/work/data/_cur_code/medium"),
-    "code_hard":   Path("/home/kenpeter/work/data/_cur_code/hard"),
-    "code_gold":   Path("/home/kenpeter/work/data/_cur_code/gold"),
+    "code_easy":   Path("/home/kenpeter/work/data/_shards_final/easy"),
+    "code_mid":    Path("/home/kenpeter/work/data/_shards_final/mid"),
+    "code_hard":   Path("/home/kenpeter/work/data/_shards_final/hard"),
+    "code_gold":   Path("/home/kenpeter/work/data/_shards_final/gold"),
 }
 
 CURRICULUM_UPDATE_INTERVAL = 2000  # steps between ratio rebuilds
 
 EASY_SPLIT = {"code_easy": 1.0}
-MED_SPLIT = {"code_medium": 1.0}
+MED_SPLIT  = {"code_mid": 1.0}
 HARD_SPLIT = {"code_hard": 0.7, "code_gold": 0.3}
 
 DOMAIN_TIER = {}

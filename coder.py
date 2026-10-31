@@ -1,6 +1,6 @@
 """Train the Simple Attention Network (needle port) on x-small's shard data.
 
-SmolLM2 tokenizer (vocab 49152) so it trains directly on the existing .bin
+StarCoder2 tokenizer (vocab 49152) so it trains directly on the existing .bin
 shards (no re-tokenization). Model ~44M params (d_model 384, 27 layers) —
 matched to the real needle2 scale (~45M). Faithful needle training: next-token
 CE on the main head + optional MTP aux loss.
@@ -568,7 +568,7 @@ def main():
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
 
-    tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-135M",
+    tokenizer = AutoTokenizer.from_pretrained("bigcode/starcoder2-7b",
                                               trust_remote_code=True)
     print(f"Tokenizer vocab: {len(tokenizer)}")
 
