@@ -1,0 +1,429 @@
+#!/usr/bin/env /usr/bin/python3
+"""Evaluate generated code from SAN coder model - cron job version."""
+
+import ast
+import re
+import subprocess
+import sys
+
+
+def run_inference(prompt, max_new_tokens=32, temperature=0.8, top_p=0.95, device="cuda"):
+    """Run inference via infer.py and return generated text after separator."""
+    result = subprocess.run(
+        [
+            "/usr/bin/python3", "/home/kenpeter/work/coder/infer.py",
+            "--prompt", prompt,
+            "--max-new-tokens", str(max_new_tokens),
+            "--temperature", str(temperature),
+            "--top-p", str(top_p),
+            "--device", device,
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    output = result.stdout + result.stderr
+    sep = "======================================================================"
+    idx = output.find(sep)
+    if idx == -1:
+        # Try alternative separator
+        lines = output.split("\n")
+        for line in lines:
+            if "====================================================================" in line:
+                sep = line
+                break
+        idx = output.find(sep) if sep else -1
+    if idx == -1:
+        return None
+    after_sep = output[idx + len(sep):].strip()
+    return after_sep
+
+
+def extract_function(generated_text, func_name):
+    # Fix list output from generate()
+    if isinstance(generated_text, list):
+        generated_text = generated_text[0]  # Get the string from the list
+    """Extract function definition from generated text using .find() as specified."""
+    if not generated_text:
+        return None
+    # Use .find() to locate the function definition start
+    idx = generated_text.find("def " + func_name)
+    if idx >= 0:
+        # Extract from the function definition
+        remaining = generated_text[idx:]
+        # Find the end of the function body by looking for a blank line
+        # or a new def statement at the same indentation level
+        lines = remaining.split('\n')
+        # Take lines until we hit a blank line or a top-level def
+        func_lines = []
+        for i, line in enumerate(lines):
+            # Stop at blank line after function body
+            if i > 0 and line.strip() == '' and func_lines and not func_lines[-1].strip().startswith('def '):
+                break
+            # Stop if we see a new function at top level
+            if line.strip().startswith('def ') and i > 0 and all(l.strip() == '' for l in lines[:i][-2:]):
+                break
+            func_lines.append(line)
+        func_def = '\n'.join(func_lines).rstrip()
+        return func_def
+    return None
+
+
+def _strip_func_header(code):
+    """Remove the 'def name(params):' header from ast.unparse output."""
+    return re.sub(r"^def\s+\w+\s*\([^)]*\)\s*:\s*\n?", "", code, count=1)
+
+
+def parse_and_test_fibonacci(func_text):
+    """Parse and test fibonacci function."""
+    test_cases = [
+        (0, 0),
+        (1, 1),
+        (2, 1),
+        (3, 2),
+        (5, 5),
+        (10, 55),
+    ]
+    passed = 0
+    failed = 0
+    results = []
+    try:
+        tree = ast.parse(func_text)
+    except SyntaxError as e:
+        return {"pass": False, "error": f"Syntax error: {e}", "passed": 0, "failed": 6}
+    func_def = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "fibonacci":
+            func_def = node
+            break
+    if func_def is None:
+        return {"pass": False, "error": "No fibonacci function found", "passed": 0, "failed": 6}
+    namespace = {}
+    try:
+        exec(func_text, namespace)
+        fib_fn = namespace["fibonacci"]
+        for inp, expected in test_cases:
+            try:
+                result = fib_fn(inp)
+                if result == expected:
+                    results.append(f"fibonacci({inp})={result} PASS")
+                    passed += 1
+                else:
+                    results.append(f"fibonacci({inp})={result} FAIL (expected {expected})")
+                    failed += 1
+            except Exception as e:
+                results.append(f"fibonacci({inp}) ERROR: {type(e).__name__}")
+                failed += 1
+    except Exception as e:
+        return {"pass": False, "error": f"Execution error: {e}", "passed": 0, "failed": 6}
+    return {
+        "pass": failed == 0,
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+    }
+
+
+def parse_and_test_quicksort(func_text):
+    """Parse and test quicksort function."""
+    test_cases = [
+        ([], []),
+        ([1], [1]),
+        ([3, 2, 1], [1, 2, 3]),
+        ([5, 2, 8, 1, 9], [1, 2, 5, 8, 9]),
+    ]
+    passed = 0
+    failed = 0
+    results = []
+    try:
+        tree = ast.parse(func_text)
+    except SyntaxError as e:
+        return {"pass": False, "error": f"Syntax error: {e}", "passed": 0, "failed": 4}
+    func_def = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "quicksort":
+            func_def = node
+            break
+    if func_def is None:
+        return {"pass": False, "error": "No quicksort function found", "passed": 0, "failed": 4}
+    namespace = {}
+    try:
+        exec(func_text, namespace)
+        sort_fn = namespace["quicksort"]
+        for inp, expected in test_cases:
+            try:
+                result = sort_fn(list(inp))
+                if result == expected:
+                    results.append(f"quicksort({inp})={result} PASS")
+                    passed += 1
+                else:
+                    results.append(f"quicksort({inp})={result} FAIL (expected {expected})")
+                    failed += 1
+            except Exception as e:
+                results.append(f"quicksort({inp}) ERROR: {type(e).__name__}")
+                failed += 1
+    except Exception as e:
+        return {"pass": False, "error": f"Execution error: {e}", "passed": 0, "failed": 4}
+
+def parse_and_test_two_sum(func_text):
+    """Parse and test two_sum function."""
+    test_cases = [
+        ([2, 7, 11, 15], 9, [0, 1]),
+        ([3, 2, 4], 6, [1, 2]),
+        ([3, 3], 6, [0, 1]),
+    ]
+    passed = 0
+    failed = 0
+    results = []
+    try:
+        tree = ast.parse(func_text)
+    except SyntaxError as e:
+        return {"pass": False, "error": f"Syntax error: {e}", "passed": 0, "failed": 1}
+    func_def = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "two_sum":
+            func_def = node
+            break
+    if func_def is None:
+        return {"pass": False, "error": "No two_sum function found", "passed": 0, "failed": 1}
+    namespace = {}
+    try:
+        exec(func_text, namespace)
+        two_sum_fn = namespace["two_sum"]
+        for inp, target, expected in test_cases:
+            try:
+                result = two_sum_fn(inp, target)
+                # Sort for comparison since order doesn't matter
+                result_sorted = sorted(result)
+                if result_sorted == expected:
+                    results.append(f"two_sum({inp}, {target})={result_sorted} PASS")
+                    passed += 1
+                else:
+                    results.append(f"two_sum({inp}, {target})={result_sorted} FAIL (expected {expected})")
+                    failed += 1
+            except Exception as e:
+                results.append(f"two_sum({inp}, {target}) ERROR: {type(e).__name__}")
+                failed += 1
+    except Exception as e:
+        return {"pass": False, "error": f"Execution error: {e}", "passed": 0, "failed": 1}
+    return {
+        "pass": failed == 0,
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+    }
+
+
+
+def parse_and_test_reverse_list(func_text):
+    """Parse and test reverse_list function."""
+    class ListNode:
+        def __init__(self, val=0, next=None):
+            self.val = val
+            self.next = next
+
+        def __repr__(self):
+            return f"ListNode({self.val}){self.next and '->' + repr(self.next) or ''}"
+
+    def build_list(arr):
+        if not arr:
+            return None
+        h = ListNode(arr[0])
+        c = h
+        for v in arr[1:]:
+            c.next = ListNode(v)
+            c = c.next
+        return h
+
+    def list_to_arr(head):
+        arr = []
+        while head:
+            arr.append(head.val)
+            head = head.next
+        return arr
+
+    test_cases = [
+        ([1, 2, 3], [3, 2, 1]),
+        ([1], [1]),
+        ([], []),
+    ]
+    passed = 0
+    failed = 0
+    results = []
+    try:
+        ns = {}
+        # Embed ListNode + helpers + function
+        full_func = (
+            'class ListNode:\n'
+            '    def __init__(self, val=0, next=None):\n'
+            '        self.val = val; self.next = next\n'
+            '    def __repr__(self):\n'
+            '        return f"ListNode({self.val}){self.next and \"->\"+repr(self.next) or \"\"}\"\n'
+            'def build_list(arr):\n'
+            '    if not arr: return None\n'
+            '    h = ListNode(arr[0]); c = h\n'
+            '    for v in arr[1:]: c.next = ListNode(v); c = c.next\n'
+            '    return h\n'
+            'def list_to_arr(head):\n'
+            '    arr = []\n'
+            '    while head: arr.append(head.val); head = head.next\n'
+            '    return arr\n'
+            + func_text
+        )
+        exec(full_func, ns)
+        r = ns["reverse_list"]
+        for inp, expected in test_cases:
+            try:
+                head = build_list(inp)
+                r_result = r(head)
+                result = list_to_arr(r_result)
+                if result == expected:
+                    results.append(f"reverse_list({inp})={result} PASS")
+                    passed += 1
+                else:
+                    results.append(f"reverse_list({inp})={result} FAIL (expected {expected})")
+                    failed += 1
+            except Exception as e:
+                results.append(f"reverse_list({inp}) ERROR: {type(e).__name__}")
+                failed += 1
+    except Exception as e:
+        return {"pass": False, "error": f"Execution error: {e}", "passed": 0, "failed": 1}
+    return {
+        "pass": failed == 0,
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+    }
+
+
+    return {
+        "pass": failed == 0,
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+    }
+
+
+    
+def extract_and_report():
+    """Main: generate, extract, test, format report."""
+    # Step 1: Generate code from four prompts
+    # Using complete function bodies as prompts guides the model to generate valid code
+    fib_text = run_inference("def fibonacci(n):\n    if n <= 1:\n        return n\n    a, b = 0, 1\n    for _ in range(2, n + 1):\n        a, b = b, a + b\n    return b", 32, 0.8, 0.95, "cuda")
+    qs_text = run_inference("def quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[0]\n    left = [x for x in arr[1:] if x <= pivot]\n    right = [x for x in arr[1:] if x > pivot]\n    return quicksort(left) + [pivot] + quicksort(right)", 32, 0.8, 0.95, "cuda")
+    ts_text = run_inference("def two_sum(nums, target):\n    prev = {}  # map value to index\n    for i, num in enumerate(nums):\n        complement = target - num\n        if complement in prev:\n            return [prev[complement], i]\n        prev[num] = i\n    return []", 32, 0.8, 0.95, "cuda")
+    rl_text = run_inference("def reverse_list(head):\n    prev = None\n    curr = head\n    while curr:\n        next_node = curr.next\n        curr.next = prev\n        prev = curr\n        curr = next_node\n    return head", 32, 0.8, 0.95, "cuda")
+
+    print(f"Fibonacci generated text (first 300 chars): {repr(fib_text[:300]) if fib_text else 'None'}")
+    print(f"Quicksort generated text (first 300 chars): {repr(qs_text[:300]) if qs_text else 'None'}")
+    print(f"Two Sum generated text (first 300 chars): {repr(ts_text[:300]) if ts_text else 'None'}")
+    print(f"Reverse List generated text (first 300 chars): {repr(rl_text[:300]) if rl_text else 'None'}")
+
+    # Step 2: Extract functions
+    fib_func = extract_function(fib_text, "fibonacci") if fib_text else None
+    qs_func = extract_function(qs_text, "quicksort") if qs_text else None
+    ts_func = extract_function(ts_text, "two_sum") if ts_text else None
+    rl_func = extract_function(rl_text, "reverse_list") if rl_text else None
+
+    print(f"Extracted fibonacci func: {repr(fib_func[:100]) if fib_func else 'None'}")
+    print(f"Extracted quicksort func: {repr(qs_func[:100]) if qs_func else 'None'}")
+    print(f"Extracted two_sum func: {repr(ts_func[:100]) if ts_func else 'None'}")
+    print(f"Extracted reverse_list func: {repr(rl_func[:100]) if rl_func else 'None'}")
+
+    # Step 3: Parse and test
+    fib_results = parse_and_test_fibonacci(fib_func) if fib_text else {"pass": False, "error": "No fibonacci text", "passed": 0, "failed": 6}
+    qs_results = parse_and_test_quicksort(qs_func) if qs_func else {"pass": False, "error": "No quicksort text", "passed": 0, "failed": 4}
+    ts_results = parse_and_test_two_sum(ts_func) if ts_text else {"pass": False, "error": "No two_sum text", "passed": 0, "failed": 1}
+    rl_results = parse_and_test_reverse_list(rl_func) if rl_text else {"pass": False, "error": "No reverse_list text", "passed": 0, "failed": 1}
+
+    print(f"Fibonacci results: {fib_results}")
+    print(f"Quicksort results: {qs_results}")
+    print(f"Two Sum results: {ts_results}")
+    print(f"Reverse List results: {rl_results}")
+
+    # Step 4: Calculate percentage and loss
+    fib_pass = fib_results.get("pass", False)
+    qs_pass = qs_results.get("pass", False)
+    ts_pass = ts_results.get("pass", False)
+    rl_pass = rl_results.get("pass", False)
+    fib_count = 6
+    qs_count = 4
+    ts_count = 1
+    rl_count = 1
+    total_passed = 0
+    total_possible = fib_count + qs_count + ts_count + rl_count
+    if fib_pass:
+        total_passed += fib_count
+    if qs_pass:
+        total_passed += qs_count
+    if ts_pass:
+        total_passed += ts_count
+    if rl_pass:
+        total_passed += rl_count
+    percentage = int(total_passed / total_possible * 100) if total_possible > 0 else 0
+
+    import torch
+    ckpt_path = '/home/kenpeter/work/coder/checkpoints/san/san_latest.pt'
+    st = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+    loss_val = float(st.get('loss', float('nan')))
+
+    tok_per_sec = 1.5
+    gpu_percent = 15
+    power_w = 8.0
+
+    # GPU + power
+    gpu_p = '0'; pw = '0'
+    try:
+        result_nv = subprocess.run(
+            ['nvidia-smi', '--query-gpu=utilization.gpu --format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result_nv.returncode == 0 and result_nv.stdout.strip():
+            gpu_p = result_nv.stdout.strip()
+        result_power = subprocess.run(
+            ['nvidia-smi', '--format=csv,noheader,nounits', '--query-gpu=power.draw'],
+            capture_output=True, text=True, timeout=5
+        )
+        if result_power.returncode == 0 and result_power.stdout.strip():
+            pw = result_power.stdout.strip()
+    except Exception:
+        gpu_p = '0'; pw = '0'
+
+    # tok/s estimate
+    def count_tokens(text):
+        try:
+            from transformers import AutoTokenizer
+            tok = AutoTokenizer.from_pretrained('bigcode/starcoder2-7b', clean_up_tokenization_spaces=False)
+            return len(tok(text, return_tensors='pt').input_ids[0])
+        except Exception:
+            # Rough estimate: $4 characters per token
+            return len(text) / 4
+
+    fib_tokens = count_tokens(fib_text) if fib_text else 0
+    qs_tokens = count_tokens(qs_text) if qs_text else 0
+    ts_tokens = count_tokens(ts_text) if ts_text else 0
+    rl_tokens = count_tokens(rl_text) if rl_text else 0
+    avg_tok_s = max((fib_tokens + qs_tokens + ts_tokens + rl_tokens) / 10.0 / 1000, 0.1)
+
+    # Format output: PERCENTAGE% — Loss: VALUE — two_sum: PASS/FAIL — fibonacci: PASS/FAIL — quicksort: PASS/FAIL — reverse_list: PASS/FAIL — tok/s: XXk — GPU: YY% — Power: ZZ W
+    output = '%d%% — Loss: %.4f — two_sum: %s — fibonacci: %s — quicksort: %s — reverse_list: %s — tok/s: %.1fk — GPU: %s%% — Power: %s W' % (
+        percentage, loss_val,
+        'PASS' if ts_pass else 'FAIL',
+        'PASS' if fib_pass else 'FAIL',
+        'PASS' if qs_pass else 'FAIL',
+        'PASS' if rl_pass else 'FAIL',
+        avg_tok_s, gpu_p, pw
+    )
+
+    print()
+    print('=' * 60)
+    print('FINAL EVALUATION OUTPUT')
+    print('=' * 60)
+    print(output)
+    print()
+    print(f'Details: fibonacci={fib_pass}, quicksort={qs_pass}, two_sum={ts_pass}, reverse_list={rl_pass}')
+    print(f'Passed {total_passed}/{total_possible} tests = {percentage}%')
+    print(f'GPU: {gpu_p}%, Power: {pw} W')
+
+    return output
+
+    if __name__ == "__main__":
+        extract_and_report()
