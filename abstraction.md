@@ -38,6 +38,7 @@ Components:
 | use_checkpoint | True, **ckpt_every=1** (full recompute for 12 GB fit at B≥4) |
 | max_steps | 1,000,000 |
 | save_every | 2000 steps |
+| **num_workers (DataLoader)** | **8** (`fork`, `prefetch_factor=4`, `persistent_workers=False`) |
 | GPU power cap | **150 W** (`nvidia-smi -pl 150`) |
 
 Resume is the normal path: `run_train.sh` resumes from
@@ -54,6 +55,62 @@ Resume is the normal path: `run_train.sh` resumes from
     "review wave" (G2 anti-forgetting) and a `curriculum_boost.json` override.
   - re-glide (ratio rebuild) every `CURRICULUM_UPDATE_INTERVAL = 2000` steps.
 
+## DataLoader workers — why `num_workers=8`
+
+"Workers" are **CPU processes** (PyTorch `DataLoader` children) that fetch and
+prepare batches in parallel with the GPU. The setting lives in
+`build_curriculum_dataloader()` in `train_san.py`:
+
+```python
+dl = DataLoader(ds, batch_size=cfg.batch_size, shuffle=False,
+                collate_fn=_collate_curriculum,
+                num_workers=8,                        # 8 CPU feeder processes
+                multiprocessing_context="fork",       # copy-on-write after CUDA init
+                pin_memory=True,                      # page-locked for fast H2D copy
+                persistent_workers=False,             # respawn after each re-glide
+                prefetch_factor=4)                    # each worker keeps 4 batches ready
+```
+
+**What one worker does per sample** (`__getitem__`):
+1. `epoch_order[idx]` → global sequence index (already in curriculum-mixed order).
+2. `_lookup(global_idx)` → `(domain, local_idx)` via the compact `_offset_arr`
+   (`np.searchsorted`, no 88M-row list).
+3. `_fetch_tokens()` → **mmap read** of 2049 `uint16` values (~4 KB) from the
+   domain's `.bin` shard; clamp at shard end; cast to `int64`.
+4. Split into `x = toks[:-1]`, `y = toks[1:]` (shifted labels).
+5. `_collate_curriculum` stacks 8 samples → `x[8,2048]`, `y[8,2048]`; `pin_memory`
+   copies into page-locked RAM; the batch goes onto the worker queue.
+
+> Workers do **not** tokenize. The shards already hold `uint16` token IDs, so a
+> worker only *slice → mmap-read → stack → pin → queue*. Per batch that is ~32 KB
+> of tokens, but it must happen **off** the main thread.
+
+**Pipeline:**
+
+```
+8 × worker ──► [batch][batch][batch][batch] (prefetch 4 each)
+                     │ queue
+                     ▼
+              main process ──► GPU ──► 8 micro-batches = 1 optimizer step (131,072 tok)
+```
+
+**Why 8 and not 0:** with `num_workers=0` the mmap/copy/stack/pin work ran
+synchronously *between* GPU steps, so the GPU idled ~90 % of wall clock →
+15.8k tok/s. With 8 workers the queue stays full and the GPU is never starved →
+**100 % / 149 W / ~31k tok/s**. A micro-batch (16,384 tokens) is consumed every
+~0.5 s; 8 workers × 4 prefetched batches is ample headroom.
+
+**Live check (how to verify the worker count):**
+```bash
+MAIN=$(for p in $(pgrep -x python3); do
+         tr '\0' ' ' < /proc/$p/cmdline | grep -q train_san.py && echo $p; done)
+ps --ppid "$MAIN" -o pid,stat,pcpu,rss,comm     # 8 × pt_data_worker
+pgrep -P "$MAIN" | wc -l                        # 10 (8 loaders + inductor pool + resource_tracker)
+```
+Each worker RSS is ~1.3 GB (copy-on-write view of the ~350 MB `epoch_order`
+int32 array). `persistent_workers=False` means these PIDs change after every
+curriculum re-glide (every 2000 steps) — the count stays at 8.
+
 ## Throughput findings (this session) — why it was 15.8k not 31k
 
 ### 1. Data starvation (fixed)
@@ -62,7 +119,9 @@ Resume is the normal path: `run_train.sh` resumes from
   was fetched/decoded on the main process, starving the GPU.
 - **Fix:** `num_workers=8`, `multiprocessing_context="fork"`, `prefetch_factor=4`,
   `persistent_workers=False` (so `reweight()` → `iter(train_loader)` actually
-  respawns workers that see the new order).
+  respawns workers that see the new order). See
+  [DataLoader workers](#dataloader-workers--why-num_workers8) above for the full
+  per-worker flow.
 - **Result:** GPU pinned at **100 % / ~149 W** (was 10 %).
 
 ### 2. The 20 GB dataset pickle / `num_workers` crash (fixed)
@@ -94,7 +153,8 @@ Resume is the normal path: `run_train.sh` resumes from
 - **27 layers / B=3** (what the code was mistakenly running, see bug): ~**17k**
   tok/s at GPU 100 %/149 W — compute-bound ceiling for a 27L model.
 - **12 layers / B=8** (x-small's config, now used): **~31–32k tok/s at 150 W**
-  (measured: step windows 30,951 and 32,111 tok/s, GPU 100 %/149 W, 10.3 GB VRAM).
+  (measured step windows: 30,951 · 32,111 · 31,638 · 32,309 tok/s; avg ≈ 31.75k;
+  GPU 100 % / 148–149 W, 10.3 GB VRAM; loss ~1.4–1.5 on clean resume).
   x-small's own scale for reference: ~23k @100 W / ~31.5k @200 W.
 - ✅ **31k reached at 150 W** once (a) data loading was moved off the main
   process (`num_workers=8`), (b) the dataset was made compact/picklable, and
@@ -122,6 +182,8 @@ Resume is the normal path: `run_train.sh` resumes from
 | Save on signal | SIGTERM/SIGINT sets a flag; saves at next step boundary then exits |
 
 ## Key operating insights
+- **Data feeding is 8 CPU workers, not the GPU.** Keep `num_workers=8`; dropping
+  to 0 collapses throughput to ~15.8k regardless of GPU headroom.
 - **GPU 100 % / 150 W is the ceiling** — tok/s is then compute-bound; the only
   remaining lever is fewer FLOPs/token (fewer layers, less recompute) or a
   larger/more efficient batch (VRAM-limited at 12 GB).
