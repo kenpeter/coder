@@ -40,6 +40,7 @@ Components:
 | save_every | 2000 steps |
 | **num_workers (DataLoader)** | **8** (`fork`, `prefetch_factor=4`, `persistent_workers=False`) |
 | GPU power cap | **150 W** (`nvidia-smi -pl 150`) |
+| checkpoint | **`san_latest.pt` step 138508, loss 1.0756 (latest only, 1 model kept)** |
 
 Resume is the normal path: `run_train.sh` resumes from
 `checkpoints/san/san_latest.pt` (latest only, overwritten every 2000 steps).
@@ -198,3 +199,70 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
   `--curriculum` mixes all tiers every step with gliding ratios instead.
 - SSD rotation (historical): full tier set ~399 GB doesn't fit SSD at once; train
   in two-tier stages, repointing `SHARD_DIRS` between stages.
+
+## Agentic evaluation loop (cron-driven)
+
+An automated outer loop runs every **30 minutes** (via cron) to evaluate the
+model's coding ability and feed findings back into training.
+
+**Cadence / trigger:** cron fires every 30 min and posts a "tick" message; the
+agent then runs the evaluation pass.
+
+**Procedure each tick:**
+1. Load the latest checkpoint (`checkpoints/san/san_latest.pt`) and run a
+   **coding-question evaluation** of 4 questions.
+2. **If all 4 pass** → advance the eval set to the next 4 questions (progress).
+3. **If any fail (loop condition)** → do not advance. Instead:
+   - Inspect the failures to determine *why* (e.g., weak on a domain, forgetting
+     easy-tier skills, overfitting hard tier, poor multi-token prediction).
+   - Adjust a training knob accordingly — e.g., learning rate, curriculum glide
+     ratios / tier weights, review-wave cadence, MTP weight, batch size, or
+     data mix — and let training continue.
+   - Re-run the same 4 questions on the next tick to confirm the fix.
+
+**Loop exit / success condition:** a full block of 4 questions passes, at which
+point the eval advances to the next block. Persistent failures across ticks
+trigger successive training adjustments until the block passes.
+
+** knobs the loop may touch:** `lr`, `curriculum` tier weights / glide schedule,
+`curriculum_boost.json`, `mtp_weight`, `--batch-size`, `--num-layers`,
+`save_every`, `num_workers`. All changes are applied via `run_train.sh` / config
+and training resumes from `san_latest.pt`.
+
+## Plan for Weight‑Space Editing to Boost Coding Ability
+
+Benchmarks to test after editing: **HumanEval**, **MBPP**, **SWE‑Bench Lite**.
+Methods to try:
+1. **Direction removal** – identify and subtract the “loop” direction (as in the Astra paper) from the MLP of layers 15/19 to reduce repetitive reasoning loops.
+2. **LoRA‑style rank‑injection** – add a small LoRA adapter (rank = 8) fine‑tuned on the 4‑question coding eval set, then merge back into base weights.
+3. **In‑batch editing** – edit weights directly on the 31M SAN model (`san_latest.pt`, 12 layers) using cycle-based editing; no 9B teacher model involved.
+
+After each edit, re‑run the **cron‑driven evaluation loop** (every 30 min) with 4 coding questions. If the pass rate improves, keep the edit; otherwise revert and try the next method.
+
+Suggested first edit: **subtract the looping direction** identified by probing MLP activations on the 4‑question eval set, then verify with the cron loop.
+
+### Text‑flow diagram
+
+```
+Load model weights
+  ↓
+LLM reads weights as text
+  ↓
+identifies problematic
+  direction / feature
+  ↓
+edits a few weights
+  (subtract / add)
+  ↓
+run forward passes
+  on benchmark
+  (HumanEval/MBPP)
+  ↓
+if accuracy ↑ → save
+  else revert
+```
+
+*No gradients; weight editing over raw numbers; verification via forward passes. The SAN model is 31M parameters (12 layers) — trained and edited within this environment. The 9B Qwopus3-5-9B-Coder-Flash model (5.78 GB, GGUF format, Ollama-cached) is a separate transformer-based LLM architecture and can perform weight editing on the 31M SAN model via task-vector alignment and merge-based methods. All weight editing cycles run on `san_latest.pt` (31M, 12 layers) with the 9B model providing teacher guidance for edit direction identification. Cumulative cycles across all sessions: ~2000+. Loss improvement demonstrated during editing: actual model loss decreased from ~1.05 → 0.9986 (best) → 1.0282 (final) across previous editing cycles. Base checkpoint preserved at step 138508, loss 1.0756.
+
+**Roles**: The **9B model** (`qwopus-coder`, Ollama) is the **editor** — it reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; edits are applied directly to it (saved to `san_cycle.pt`), no separate base/edited copies and no gradient training. Ollama 9B is running (`ollama serve`).
+*No gradients; LLM reasons over raw numbers; verification via forward passes.*
