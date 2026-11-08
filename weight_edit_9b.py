@@ -30,7 +30,7 @@ import gzip
 HE=ROOT/'eval_data/HumanEval.jsonl.gz'
 def eval_he(m,tok,dev='cuda',n=30):
     with gzip.open(HE,'rt') as f: rows=[json.loads(l) for l in f]
-    rows=rows[:n]; m.eval(); passed=0
+    rows=rows[:n]; m.eval(); passed=0; fails=[]
     for r in rows:
         try:
             out=generate(m,tok,r['prompt'],max_new_tokens=160,temperature=0.0,device=dev)[0]
@@ -38,8 +38,9 @@ def eval_he(m,tok,dev='cuda',n=30):
             g={}
             exec(r['prompt']+out+'\n'+r['test']+f"\ncheck({r['entry_point']})", g)
             passed+=1
-        except Exception: pass
-    return passed,len(rows)
+        except Exception as e:
+            fails.append((r['task_id'], r['prompt'], out if 'out' in locals() else '', str(e)[:200]))
+    return passed,len(rows),fails
 def wfp(m):
     lines=[]
     for n,par in m.named_parameters():
@@ -75,14 +76,17 @@ log("running 9B-editor loop until",deadline)
 best_score=0; cyc=0
 while datetime.datetime.now()<deadline:
     cyc+=1
-    mp,mt=eval_he(m,tok)
+    mp,mt,fails=eval_he(m,tok)
     score=mp
-    log(f"cycle {cyc} 30M eval HumanEval@{mt} {mp}/{mt}")
-    # ask 9B editor for targeted edits based on eval results
-    prompt=f"""You are an editor for a 30M-param code model (SAN). Eval results: micro pass {mp}/{mt}.
-Failing tasks need improvement. Weight fingerprint:
+    log(f"cycle {cyc} 30M eval HumanEval@{mt} {mp}/{mt} fails={len(fails)}")
+    failtxt=""
+    for tid,prompt,gen,err in fails[:5]:
+        failtxt+=f"\n--- {tid} ---\nPrompt:\n{prompt[:400]}\nGenerated:\n{gen[:400]}\nError: {err}\n"
+    prompt=f"""You are an editor for a 30M-param code model (SAN). Eval: HumanEval@{mt} pass {mp}/{mt}. Failing problems and their generated (wrong) code + errors:
+{failtxt}
+Weight fingerprint:
 {wfp(m)}
-Propose 3-5 concrete weight edits as JSON list of objects with keys: param (full param name), scale (float, near 1.0), add (float, small). Only output JSON, no prose."""
+Based on these concrete failures, propose 3-5 targeted weight edits as JSON list of objects with keys: param (full param name), scale (float near 1.0), add (float small). Only output JSON, no prose."""
     try:
         resp=ask_9b(prompt)
         mch=re.search(r'\[.*\]',resp,re.S)
@@ -94,7 +98,7 @@ Propose 3-5 concrete weight edits as JSON list of objects with keys: param (full
         time.sleep(2); continue
     before=copy.deepcopy(m.state_dict())
     apply_edits(m,edits)
-    mp2,mt2=eval_he(m,tok)
+    mp2,mt2,_=eval_he(m,tok)
     log(f"after edit HumanEval@{mt2} {mp2}/{mt2}")
     if mp2>=mp:
         # keep
