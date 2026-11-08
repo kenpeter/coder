@@ -272,6 +272,15 @@ if accuracy ↑ → save
 
 **Roles (emphasized): the 9B model (`qwopus-coder`) is the EDITOR; the 30M SAN model (`san_latest.pt`) is the EDITEE.** The 9B only reasons and proposes edits; the artifact being improved is `san_latest.pt`. All edits are applied in place to `san_latest.pt`.
 
+### How the 9B uses HumanEval pass/fail feedback to edit weights
+Each cycle:
+1. Run HumanEval@30 on the 30M model → get pass count + list of failing problems with their prompts, generated (wrong) code, and error messages.
+2. Build a weight fingerprint (param name, shape, mean, std, norm) for every tensor.
+3. Send the 9B a prompt containing: the pass/fail summary, the failing problems' prompts + generated code + errors, and the weight fingerprint. The 9B is instructed to reason about *why* those failures occur (e.g. syntax errors → output head / norm issue; wrong logic → attention/MLP direction) and propose targeted deltas.
+4. The 9B returns a JSON list of edits `{param, scale, add}` targeting specific parameters (e.g. `blocks.10.attn.q_norm.scale`, `final_norm.scale`, `blocks.11.hadamard_mlp.d3`).
+5. Apply the deltas in place to `san_latest.pt`, re-run HumanEval@30.
+6. Keep the edit if pass rate did not drop; otherwise revert. The outcome (pass/fail counts) is reported via Telegram every 30 min, so the loop's progress is visible.
+
 ### Launching the 9B model (Ollama)
 ```bash
 ollama serve > /tmp/opencode/ollama.log 2>&1 &
