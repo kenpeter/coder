@@ -4,6 +4,13 @@ CHAT="715681785"
 LOG=/home/kenpeter/work/coder/weight_edit_9b.log
 LAST=/tmp/opencode/last_he.txt
 CUR=$(grep -o "HumanEval@[0-9]* [0-9]*/[0-9]*" "$LOG" | tail -1)
+# append pass/fail breakdown
+if [ -n "$CUR" ]; then
+  P=$(echo "$CUR" | grep -o "[0-9]*/" | tr -d '/')
+  T=$(echo "$CUR" | grep -o "/[0-9]*" | tr -d '/')
+  F=$((T-P))
+  CUR="$CUR (pass=$P fail=$F)"
+fi
 PREV=""
 [ -f "$LAST" ] && PREV=$(cat "$LAST")
 if [ "$CUR" != "$PREV" ] && [ -n "$CUR" ]; then
