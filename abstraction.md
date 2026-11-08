@@ -267,4 +267,17 @@ if accuracy ↑ → save
 **Roles**: The **9B model** (`qwopus-coder`, Ollama) is the **editor** — it reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training. Ollama 9B is running (`ollama serve`).
 
 **Editor must be based on eval results**: the 9B editor's decisions must be grounded in the **inference/eval results of the 30M model** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle: **run inference + eval on the 30M model first** (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the 9B editor → editor proposes targeted weight edits (not blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better 9B model. The 9B is only a reasoning tool; the artifact being improved is `san_latest.pt` (30M). Edits are never blind; every edit is justified by 30M inference/eval evidence. No toy micro tasks; use the proper standard benchmark (HumanEval@30).
+
+## Single edit cycle (weight_edit_9b.py)
+
+One cycle (~30-60s) proceeds as:
+
+1. **Load** `san_latest.pt` (30M, 12 layers) into GPU; load tokenizer.
+2. **Inference + eval (HumanEval@30)** on the 30M model: generate a completion for each of the 30 problems (greedy, 160 new tokens), `exec` prompt+completion+tests, record pass/fail. Capture failing problem IDs, prompts, generated code, and error messages.
+3. **Build weight fingerprint**: for every parameter, name/shape/mean/std/norm.
+4. **Ask the 9B editor** (Ollama `qwopus-coder`) with a prompt containing the failing problems' prompts + generated code + errors + weight fingerprint. The 9B returns a JSON list of targeted edits `{param, scale, add}`.
+5. **Apply edits in place** to `san_latest.pt` tensors (multiply by scale, add delta).
+6. **Re-evaluate** the 30M model on HumanEval@30.
+7. **Keep or revert**: if pass rate did not drop, overwrite `san_latest.pt` in place with the edited weights; otherwise restore the previous weights.
+8. Repeat until 8pm deadline. A Telegram message is sent every 30 min reporting pass/fail counts.
 *No gradients; LLM reasons over raw numbers; verification via forward passes.*
