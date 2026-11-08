@@ -272,6 +272,52 @@ if accuracy ↑ → save
 
 **Roles (emphasized): the 9B model (`qwopus-coder`) is the EDITOR; the 30M SAN model (`san_latest.pt`) is the EDITEE.** The 9B only reasons and proposes edits; the artifact being improved is `san_latest.pt`. All edits are applied in place to `san_latest.pt`.
 
+### Launching the 9B model (Ollama)
+```bash
+ollama serve > /tmp/opencode/ollama.log 2>&1 &
+# model is already cached:
+ollama list   # -> qwopus-coder:latest (5.8 GB)
+# sanity check:
+echo "hi" | ollama run qwopus-coder "say hi in one word"
+# API used by weight_edit_9b.py:
+# POST http://localhost:11434/api/generate  {"model":"qwopus-coder","prompt":...,"stream":false}
+```
+
+### What is HumanEval@30
+HumanEval is the standard code-generation benchmark (OpenAI). Each problem has a function signature + docstring prompt, a reference solution, and unit tests. HumanEval@30 = the first 30 problems of `eval_data/HumanEval.jsonl.gz`, evaluated pass@1 with greedy decoding (temperature 0.0), 160 new tokens. A problem passes if `exec(prompt + generated_completion + test + check(entry_point))` raises no exception.
+
+### Example of one HumanEval test (problem 0)
+Prompt:
+```
+from typing import List
+
+def has_close_elements(numbers: List[float], threshold: float) -> bool:
+    \"\"\" Check if in given list of numbers, are any two numbers closer to each other than
+    given threshold.
+    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)
+    False
+    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)
+    True
+    \"\"\"
+```
+Generated completion (model output, truncated at `\ndef `):
+```
+    for idx, elem in enumerate(numbers):
+        for idx2, elem2 in enumerate(numbers):
+            if idx != idx2 and abs(elem - elem2) < threshold:
+                return True
+    return False
+```
+Test (from the dataset):
+```
+def check(candidate):
+    assert candidate([1.0, 2.0, 3.0], 0.5) == False
+    assert candidate([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3) == True
+    ...
+check(has_close_elements)
+```
+Pass if no AssertionError/exception is raised.
+
 One cycle (~30-60s) proceeds as:
 
 1. **Load** `san_latest.pt` (30M, 12 layers) into GPU; load tokenizer.
