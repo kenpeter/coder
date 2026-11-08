@@ -182,6 +182,16 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
 | Resume-safe | num_layers auto-matched; per-layer params sliced if overridden |
 | Save on signal | SIGTERM/SIGINT sets a flag; saves at next step boundary then exits |
 
+## Maxing GPU and CPU utilization
+- **GPU:** keep the model on CUDA, use bfloat16, keep `ckpt_every=1` (full recompute) to fit 12GB at B=8, and keep the data pipeline feeding the GPU. Cap power with `sudo nvidia-smi -pl 150` (resets to ~285W on reboot). Target ~100% util / 149W.
+- **CPU:** use `num_workers=8` with `multiprocessing_context="fork"`, `prefetch_factor=4`, `pin_memory=True`. Workers do mmap reads off the main thread so the GPU is never starved. With `num_workers=0` throughput collapses to ~15.8k tok/s.
+- **Live check:**
+```bash
+nvidia-smi --query-gpu=utilization.gpu,power.draw,memory.used --format=csv,noheader
+top -bn1 | grep "Cpu(s)"
+```
+- **Weight-edit cycle:** runs on GPU during HumanEval eval (~97% util). The 9B editor runs on CPU via Ollama. Keep Ollama serving (`ollama serve`) so the editor is available.
+
 ## Key operating insights
 - **Data feeding is 8 CPU workers, not the GPU.** Keep `num_workers=8`; dropping
   to 0 collapses throughput to ~15.8k regardless of GPU headroom.
