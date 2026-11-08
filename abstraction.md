@@ -270,6 +270,8 @@ if accuracy ↑ → save
 
 ## Single edit cycle (weight_edit_9b.py)
 
+**Roles (emphasized): the 9B model (`qwopus-coder`) is the EDITOR; the 30M SAN model (`san_latest.pt`) is the EDITEE.** The 9B only reasons and proposes edits; the artifact being improved is `san_latest.pt`. All edits are applied in place to `san_latest.pt`.
+
 One cycle (~30-60s) proceeds as:
 
 1. **Load** `san_latest.pt` (30M, 12 layers) into GPU; load tokenizer.
