@@ -1,0 +1,1335 @@
+{
+  "total_groups": 221,
+  "edited_groups": 221,
+  "weight_changes": {
+    "phi_pre": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 4.0618582715978846e-05,
+      "edited_mean": 1.783211700967513e-05
+    },
+    "phi_post": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.00023395981406792998,
+      "edited_mean": -0.000227720636758022
+    },
+    "phi_res": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.010000001639127731,
+      "original_mean": -9.33211122173816e-05,
+      "edited_mean": -3.737221413757652e-05
+    },
+    "b_pre": {
+      "change_magnitude": 0.007499998901039362,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.07413739711046219,
+      "edited_mean": -0.07163739204406738
+    },
+    "b_post": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.09446857124567032,
+      "edited_mean": -0.08905190229415894
+    },
+    "b_res": {
+      "change_magnitude": 0.002499997615814209,
+      "max_change": 0.009999990463256836,
+      "original_mean": 1.0,
+      "edited_mean": 0.9975000023841858
+    },
+    "a_pre": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.29517731070518494,
+      "edited_mean": 0.2851772904396057
+    },
+    "a_post": {
+      "change_magnitude": 0.010000002570450306,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.2156333476305008,
+      "edited_mean": 0.20563334226608276
+    },
+    "a_res": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.009999999776482582,
+      "original_mean": 0.009999998845160007,
+      "edited_mean": 0.0
+    },
+    "_pre_off": {
+      "change_magnitude": 0.010000109672546387,
+      "max_change": 0.010000228881835938,
+      "original_mean": 8.0,
+      "edited_mean": 7.994999885559082
+    },
+    "_post_off": {
+      "change_magnitude": 0.007500052452087402,
+      "max_change": 0.010000228881835938,
+      "original_mean": 2.0,
+      "edited_mean": 1.997499942779541
+    },
+    "embedding.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00015544891357421875,
+      "edited_mean": -0.0002498626708984375
+    },
+    "engrams.0.embedding": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.000484466552734375,
+      "edited_mean": -0.00040435791015625
+    },
+    "engrams.0.taps": {
+      "change_magnitude": 0.01043701171875,
+      "max_change": 0.01171875,
+      "original_mean": 0.267578125,
+      "edited_mean": 0.26171875
+    },
+    "engrams.0.key_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.000102996826171875,
+      "edited_mean": -0.0001354217529296875
+    },
+    "engrams.0.value_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00012159347534179688,
+      "edited_mean": -0.00011587142944335938
+    },
+    "blocks.0.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": -0.472039133310318,
+      "edited_mean": -0.46203914284706116
+    },
+    "blocks.0.norm1.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.21379989385604858,
+      "edited_mean": 0.20385198295116425
+    },
+    "blocks.0.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 7.104873657226562e-05,
+      "edited_mean": 5.91278076171875e-05
+    },
+    "blocks.0.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.000186920166015625,
+      "edited_mean": -0.000148773193359375
+    },
+    "blocks.0.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 1.1980533599853516e-05,
+      "edited_mean": 2.86102294921875e-06
+    },
+    "blocks.0.attn.q_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.4553569257259369,
+      "edited_mean": 0.44535696506500244
+    },
+    "blocks.0.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.4285293519496918,
+      "edited_mean": 0.41852936148643494
+    },
+    "blocks.0.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00013828277587890625,
+      "edited_mean": -0.0001068115234375
+    },
+    "blocks.0.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 9.250640869140625e-05,
+      "edited_mean": 3.2901763916015625e-05
+    },
+    "blocks.0.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.0667700245976448,
+      "edited_mean": -0.058020029217004776
+    },
+    "blocks.0.pre_hada_norm.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.08864209800958633,
+      "edited_mean": 0.08239208906888962
+    },
+    "blocks.0.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.0.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.0.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.049560546875,
+      "edited_mean": -0.04541015625
+    },
+    "blocks.0.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.1.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": -0.722896158695221,
+      "edited_mean": -0.7128961682319641
+    },
+    "blocks.1.norm1.scale": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.24639792740345,
+      "edited_mean": 0.23645003139972687
+    },
+    "blocks.1.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -6.866455078125e-05,
+      "edited_mean": -0.000102996826171875
+    },
+    "blocks.1.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 1.329183578491211e-05,
+      "edited_mean": -1.0967254638671875e-05
+    },
+    "blocks.1.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00023746490478515625,
+      "edited_mean": 0.0001735687255859375
+    },
+    "blocks.1.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.5292173027992249,
+      "edited_mean": 0.519217312335968
+    },
+    "blocks.1.attn.k_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.5143595337867737,
+      "edited_mean": 0.5043595433235168
+    },
+    "blocks.1.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00014495849609375,
+      "edited_mean": -0.00010013580322265625
+    },
+    "blocks.1.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -6.580352783203125e-05,
+      "edited_mean": -3.5762786865234375e-05
+    },
+    "blocks.1.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.07373661547899246,
+      "edited_mean": -0.0655074492096901
+    },
+    "blocks.1.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999997913837433,
+      "max_change": 0.010000228881835938,
+      "original_mean": 0.1081702709197998,
+      "edited_mean": 0.10197236388921738
+    },
+    "blocks.1.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.1.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.1.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.04443359375,
+      "edited_mean": -0.041015625
+    },
+    "blocks.1.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.2.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": -0.5248554944992065,
+      "edited_mean": -0.5148555040359497
+    },
+    "blocks.2.norm1.scale": {
+      "change_magnitude": 0.01000000350177288,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.18744896352291107,
+      "edited_mean": 0.17750103771686554
+    },
+    "blocks.2.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00012683868408203125,
+      "edited_mean": 0.00010633468627929688
+    },
+    "blocks.2.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -8.344650268554688e-05,
+      "edited_mean": -5.9604644775390625e-05
+    },
+    "blocks.2.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00010967254638671875,
+      "edited_mean": -0.00011491775512695312
+    },
+    "blocks.2.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.4657557010650635,
+      "edited_mean": 0.4557556211948395
+    },
+    "blocks.2.attn.k_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.47656893730163574,
+      "edited_mean": 0.4665689468383789
+    },
+    "blocks.2.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.000812530517578125,
+      "edited_mean": -0.00063323974609375
+    },
+    "blocks.2.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -7.420778274536133e-06,
+      "edited_mean": 1.0579824447631836e-06
+    },
+    "blocks.2.post_attn_norm.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.12453964352607727,
+      "edited_mean": -0.11469588428735733
+    },
+    "blocks.2.pre_hada_norm.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.1765606552362442,
+      "edited_mean": 0.1673939824104309
+    },
+    "blocks.2.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.2.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.2.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.057373046875,
+      "edited_mean": -0.052490234375
+    },
+    "blocks.2.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.3.attn_gate": {
+      "change_magnitude": 0.01000000536441803,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.18994425237178802,
+      "edited_mean": -0.17994424700737
+    },
+    "blocks.3.norm1.scale": {
+      "change_magnitude": 0.009999996051192284,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.23607753217220306,
+      "edited_mean": 0.227692112326622
+    },
+    "blocks.3.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 8.106231689453125e-06,
+      "edited_mean": 2.9087066650390625e-05
+    },
+    "blocks.3.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00011491775512695312,
+      "edited_mean": -8.869171142578125e-05
+    },
+    "blocks.3.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.0001926422119140625,
+      "edited_mean": -0.0001888275146484375
+    },
+    "blocks.3.attn.q_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.4706175625324249,
+      "edited_mean": 0.4606175422668457
+    },
+    "blocks.3.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.4528569281101227,
+      "edited_mean": 0.4432735741138458
+    },
+    "blocks.3.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.000240325927734375,
+      "edited_mean": 0.0002002716064453125
+    },
+    "blocks.3.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00010442733764648438,
+      "edited_mean": 7.05718994140625e-05
+    },
+    "blocks.3.post_attn_norm.scale": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.045690834522247314,
+      "edited_mean": -0.03912833705544472
+    },
+    "blocks.3.pre_hada_norm.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.00013655144721269608,
+      "edited_mean": 0.0005926162120886147
+    },
+    "blocks.3.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.3.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.3.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.0123291015625,
+      "edited_mean": 0.008056640625
+    },
+    "blocks.3.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.4.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": -0.4179711639881134,
+      "edited_mean": -0.40797117352485657
+    },
+    "blocks.4.norm1.scale": {
+      "change_magnitude": 0.010000001639127731,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.13842183351516724,
+      "edited_mean": 0.12894263863563538
+    },
+    "blocks.4.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 6.628036499023438e-05,
+      "edited_mean": 5.2928924560546875e-05
+    },
+    "blocks.4.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00012159347534179688,
+      "edited_mean": -9.584426879882812e-05
+    },
+    "blocks.4.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -4.076957702636719e-05,
+      "edited_mean": -8.940696716308594e-06
+    },
+    "blocks.4.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.6780794262886047,
+      "edited_mean": 0.6680794358253479
+    },
+    "blocks.4.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.6581552028656006,
+      "edited_mean": 0.648155152797699
+    },
+    "blocks.4.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.000759124755859375,
+      "edited_mean": 0.000640869140625
+    },
+    "blocks.4.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -4.8160552978515625e-05,
+      "edited_mean": -1.430511474609375e-05
+    },
+    "blocks.4.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.058860450983047485,
+      "edited_mean": -0.05026670917868614
+    },
+    "blocks.4.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.04359370470046997,
+      "edited_mean": 0.039895787835121155
+    },
+    "blocks.4.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.4.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.4.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.045166015625,
+      "edited_mean": -0.04052734375
+    },
+    "blocks.4.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.5.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": -0.48662620782852173,
+      "edited_mean": -0.4766262173652649
+    },
+    "blocks.5.norm1.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.12348755449056625,
+      "edited_mean": 0.1136958971619606
+    },
+    "blocks.5.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -4.3392181396484375e-05,
+      "edited_mean": -1.150369644165039e-05
+    },
+    "blocks.5.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00011968612670898438,
+      "edited_mean": 0.00011348724365234375
+    },
+    "blocks.5.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00016498565673828125,
+      "edited_mean": 0.0001277923583984375
+    },
+    "blocks.5.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999999776482582,
+      "original_mean": 0.5851073265075684,
+      "edited_mean": 0.5755240321159363
+    },
+    "blocks.5.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.5645268559455872,
+      "edited_mean": 0.5549435019493103
+    },
+    "blocks.5.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.000888824462890625,
+      "edited_mean": 0.000751495361328125
+    },
+    "blocks.5.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -3.4421682357788086e-06,
+      "edited_mean": -4.0046870708465576e-07
+    },
+    "blocks.5.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.04552624747157097,
+      "edited_mean": -0.03974499925971031
+    },
+    "blocks.5.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999996982514858,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.07427621632814407,
+      "edited_mean": -0.07516162842512131
+    },
+    "blocks.5.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.5.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.5.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.03173828125,
+      "edited_mean": -0.028564453125
+    },
+    "blocks.5.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.6.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.3079652786254883,
+      "edited_mean": 0.29796528816223145
+    },
+    "blocks.6.norm1.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.13485775887966156,
+      "edited_mean": 0.12496190518140793
+    },
+    "blocks.6.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 1.1622905731201172e-05,
+      "edited_mean": 3.0249357223510742e-06
+    },
+    "blocks.6.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00011682510375976562,
+      "edited_mean": -5.1975250244140625e-05
+    },
+    "blocks.6.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 5.173683166503906e-05,
+      "edited_mean": 2.396106719970703e-05
+    },
+    "blocks.6.attn.q_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.7057142853736877,
+      "edited_mean": 0.6957144141197205
+    },
+    "blocks.6.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.6736324429512024,
+      "edited_mean": 0.6644658446311951
+    },
+    "blocks.6.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.001068115234375,
+      "edited_mean": 0.0009002685546875
+    },
+    "blocks.6.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -7.2479248046875e-05,
+      "edited_mean": -4.982948303222656e-05
+    },
+    "blocks.6.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.047589097172021866,
+      "edited_mean": 0.04139118269085884
+    },
+    "blocks.6.pre_hada_norm.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.09374481439590454,
+      "edited_mean": 0.08697398751974106
+    },
+    "blocks.6.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.6.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.6.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.054931640625,
+      "edited_mean": -0.0498046875
+    },
+    "blocks.6.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.7.attn_gate": {
+      "change_magnitude": 0.01000000536441803,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.20377962291240692,
+      "edited_mean": -0.1937796175479889
+    },
+    "blocks.7.norm1.scale": {
+      "change_magnitude": 0.009999996051192284,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.2756732106208801,
+      "edited_mean": 0.2656732201576233
+    },
+    "blocks.7.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 7.772445678710938e-05,
+      "edited_mean": 6.866455078125e-05
+    },
+    "blocks.7.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -9.107589721679688e-05,
+      "edited_mean": -0.00011873245239257812
+    },
+    "blocks.7.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -9.894371032714844e-06,
+      "edited_mean": 1.4483928680419922e-05
+    },
+    "blocks.7.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.6200911998748779,
+      "edited_mean": 0.6100912690162659
+    },
+    "blocks.7.attn.k_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.5931723117828369,
+      "edited_mean": 0.5831723809242249
+    },
+    "blocks.7.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00128936767578125,
+      "edited_mean": 0.001068115234375
+    },
+    "blocks.7.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 2.3603439331054688e-05,
+      "edited_mean": 2.3126602172851562e-05
+    },
+    "blocks.7.post_attn_norm.scale": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.01357466820627451,
+      "edited_mean": -0.009824668057262897
+    },
+    "blocks.7.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.021787719801068306,
+      "edited_mean": -0.02407938800752163
+    },
+    "blocks.7.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.7.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.7.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.035888671875,
+      "edited_mean": -0.031982421875
+    },
+    "blocks.7.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.8.attn_gate": {
+      "change_magnitude": 0.010000001639127731,
+      "max_change": 0.010000001639127731,
+      "original_mean": -0.062038760632276535,
+      "edited_mean": -0.052038758993148804
+    },
+    "blocks.8.norm1.scale": {
+      "change_magnitude": 0.010000004433095455,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.1972007304430008,
+      "edited_mean": 0.18725280463695526
+    },
+    "blocks.8.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 1.9073486328125e-05,
+      "edited_mean": 4.267692565917969e-05
+    },
+    "blocks.8.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -8.869171142578125e-05,
+      "edited_mean": -3.24249267578125e-05
+    },
+    "blocks.8.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00011301040649414062,
+      "edited_mean": -9.441375732421875e-05
+    },
+    "blocks.8.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.6589139699935913,
+      "edited_mean": 0.6489139795303345
+    },
+    "blocks.8.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.6182664036750793,
+      "edited_mean": 0.6086830496788025
+    },
+    "blocks.8.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.000774383544921875,
+      "edited_mean": 0.000644683837890625
+    },
+    "blocks.8.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00011348724365234375,
+      "edited_mean": 9.34600830078125e-05
+    },
+    "blocks.8.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.0033021243289113045,
+      "edited_mean": -0.0020000413060188293
+    },
+    "blocks.8.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.07281997799873352,
+      "edited_mean": -0.07276789844036102
+    },
+    "blocks.8.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.8.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.8.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.028564453125,
+      "edited_mean": -0.02587890625
+    },
+    "blocks.8.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.9.attn_gate": {
+      "change_magnitude": 0.009999997913837433,
+      "max_change": 0.009999997913837433,
+      "original_mean": 0.09588849544525146,
+      "edited_mean": 0.08588849753141403
+    },
+    "blocks.9.norm1.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.1286107748746872,
+      "edited_mean": 0.11871492862701416
+    },
+    "blocks.9.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 2.09808349609375e-05,
+      "edited_mean": 9.238719940185547e-06
+    },
+    "blocks.9.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 4.673004150390625e-05,
+      "edited_mean": 4.744529724121094e-05
+    },
+    "blocks.9.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00013828277587890625,
+      "edited_mean": -7.43865966796875e-05
+    },
+    "blocks.9.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999997913837433,
+      "original_mean": 0.6527859568595886,
+      "edited_mean": 0.6427859663963318
+    },
+    "blocks.9.attn.k_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.6293821334838867,
+      "edited_mean": 0.6193820834159851
+    },
+    "blocks.9.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.000316619873046875,
+      "edited_mean": 0.000270843505859375
+    },
+    "blocks.9.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00015544891357421875,
+      "edited_mean": 0.0001583099365234375
+    },
+    "blocks.9.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.01154857873916626,
+      "edited_mean": 0.010611079633235931
+    },
+    "blocks.9.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.03852970525622368,
+      "edited_mean": -0.039310961961746216
+    },
+    "blocks.9.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.9.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.9.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.0284423828125,
+      "edited_mean": -0.02587890625
+    },
+    "blocks.9.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.10.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.3514311909675598,
+      "edited_mean": 0.341431200504303
+    },
+    "blocks.10.norm1.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.041293855756521225,
+      "edited_mean": 0.035981353372335434
+    },
+    "blocks.10.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -7.040798664093018e-07,
+      "edited_mean": 1.7642974853515625e-05
+    },
+    "blocks.10.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 3.814697265625e-05,
+      "edited_mean": 4.0531158447265625e-05
+    },
+    "blocks.10.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -8.20159912109375e-05,
+      "edited_mean": -7.152557373046875e-05
+    },
+    "blocks.10.attn.q_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.6447235941886902,
+      "edited_mean": 0.6355569958686829
+    },
+    "blocks.10.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.6080241799354553,
+      "edited_mean": 0.5988575220108032
+    },
+    "blocks.10.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.000293731689453125,
+      "edited_mean": 0.0002593994140625
+    },
+    "blocks.10.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -4.38690185546875e-05,
+      "edited_mean": -3.170967102050781e-05
+    },
+    "blocks.10.post_attn_norm.scale": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.07576137036085129,
+      "edited_mean": 0.06815720349550247
+    },
+    "blocks.10.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999995119869709,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.32398056983947754,
+      "edited_mean": 0.314240962266922
+    },
+    "blocks.10.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.10.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.10.hadamard_mlp.d3": {
+      "change_magnitude": 0.00994873046875,
+      "max_change": 0.01025390625,
+      "original_mean": -0.0791015625,
+      "edited_mean": -0.07421875
+    },
+    "blocks.10.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "blocks.11.attn_gate": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.9843965172767639,
+      "edited_mean": 0.9743965268135071
+    },
+    "blocks.11.norm1.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.12239456921815872,
+      "edited_mean": 0.11270708590745926
+    },
+    "blocks.11.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.0002002716064453125,
+      "edited_mean": 0.0001277923583984375
+    },
+    "blocks.11.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.0001926422119140625,
+      "edited_mean": 0.0001735687255859375
+    },
+    "blocks.11.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -9.059906005859375e-05,
+      "edited_mean": -7.581710815429688e-05
+    },
+    "blocks.11.attn.q_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.6620540022850037,
+      "edited_mean": 0.6520540118217468
+    },
+    "blocks.11.attn.k_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 0.6435292363166809,
+      "edited_mean": 0.6335293054580688
+    },
+    "blocks.11.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00030517578125,
+      "edited_mean": -0.0002422332763671875
+    },
+    "blocks.11.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 7.05718994140625e-05,
+      "edited_mean": 6.031990051269531e-05
+    },
+    "blocks.11.post_attn_norm.scale": {
+      "change_magnitude": 0.009999998845160007,
+      "max_change": 0.01000000536441803,
+      "original_mean": -0.020135467872023582,
+      "edited_mean": -0.014718801714479923
+    },
+    "blocks.11.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.09812603145837784,
+      "edited_mean": 0.09250102192163467
+    },
+    "blocks.11.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.11.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "blocks.11.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.04248046875,
+      "edited_mean": 0.0341796875
+    },
+    "blocks.11.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "final_norm.scale": {
+      "change_magnitude": 0.010000145994126797,
+      "max_change": 0.010000228881835938,
+      "original_mean": 4.0381178855896,
+      "edited_mean": 4.028118133544922
+    },
+    "mtp_emb_norm.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.21613258123397827,
+      "edited_mean": 0.2067054957151413
+    },
+    "mtp_combine.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.0002002716064453125,
+      "edited_mean": 0.000202178955078125
+    },
+    "mtp_block.attn_gate": {
+      "change_magnitude": 0.010000228881835938,
+      "max_change": 0.010000228881835938,
+      "original_mean": 6.898080348968506,
+      "edited_mean": 6.88808012008667
+    },
+    "mtp_block.norm1.scale": {
+      "change_magnitude": 0.010000000707805157,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.11738160997629166,
+      "edited_mean": 0.10805869102478027
+    },
+    "mtp_block.attn.q_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.0004425048828125,
+      "edited_mean": 0.0003509521484375
+    },
+    "mtp_block.attn.k_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 0.00015926361083984375,
+      "edited_mean": 0.00014972686767578125
+    },
+    "mtp_block.attn.v_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.0002841949462890625,
+      "edited_mean": -0.00022792816162109375
+    },
+    "mtp_block.attn.q_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.8652441501617432,
+      "edited_mean": 0.8560774326324463
+    },
+    "mtp_block.attn.k_norm.scale": {
+      "change_magnitude": 0.00999999139457941,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.7631576657295227,
+      "edited_mean": 0.7556576728820801
+    },
+    "mtp_block.attn.gate_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.0007476806640625,
+      "edited_mean": -0.0006103515625
+    },
+    "mtp_block.attn.out_proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.00010919570922851562,
+      "edited_mean": -5.7220458984375e-05
+    },
+    "mtp_block.post_attn_norm.scale": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": 1.0555940866470337,
+      "edited_mean": 1.0456461906433105
+    },
+    "mtp_block.pre_hada_norm.scale": {
+      "change_magnitude": 0.009999995119869709,
+      "max_change": 0.01000000536441803,
+      "original_mean": 0.04132438823580742,
+      "edited_mean": 0.04054313898086548
+    },
+    "mtp_block.hadamard_mlp.d1": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "mtp_block.hadamard_mlp.d2": {
+      "change_magnitude": 0.01171875,
+      "max_change": 0.01171875,
+      "original_mean": 1.0,
+      "edited_mean": 0.98828125
+    },
+    "mtp_block.hadamard_mlp.d3": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": -0.0234375,
+      "edited_mean": -0.0230712890625
+    },
+    "mtp_block.hadamard_mlp.H": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 8.630752563476562e-05,
+      "edited_mean": 6.67572021484375e-05
+    },
+    "mtp_final_norm.scale": {
+      "change_magnitude": 0.010000098496675491,
+      "max_change": 0.010000228881835938,
+      "original_mean": 3.883976697921753,
+      "edited_mean": 3.8740291595458984
+    },
+    "contrastive_head.probes": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.010000001639127731,
+      "original_mean": 0.0009731880272738636,
+      "edited_mean": 0.0005695422296412289
+    },
+    "contrastive_head.log_temp": {
+      "change_magnitude": 0.009999990463256836,
+      "max_change": 0.009999990463256836,
+      "original_mean": -2.6592600345611572,
+      "edited_mean": -2.6492600440979004
+    },
+    "contrastive_head.proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.01025390625,
+      "original_mean": 6.51925802230835e-08,
+      "edited_mean": 2.47955322265625e-05
+    },
+    "confidence_head.probes": {
+      "change_magnitude": 0.009999999776482582,
+      "max_change": 0.010000001639127731,
+      "original_mean": -0.0003581105265766382,
+      "edited_mean": -0.00022790227376390249
+    },
+    "confidence_head.proj.weight": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": -0.0003261566162109375,
+      "edited_mean": -5.817413330078125e-05
+    },
+    "confidence_head.proj.bias": {
+      "change_magnitude": 0.010009765625,
+      "max_change": 0.010009765625,
+      "original_mean": 0.0029449462890625,
+      "edited_mean": -0.007080078125
+    }
+  },
+  "timestamp": "2026-11-08 10:39:25",
+  "edit_amount": 0.01,
+  "edit_type": "edit_all_weights"
+}

@@ -276,7 +276,45 @@ if accuracy ↑ → save
 
 **Roles**: The **9B model** (`qwopus-coder`, Ollama) is the **editor** — it reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training. Ollama 9B is running (`ollama serve`).
 
-**Editor must be based on eval results**: the 9B editor's decisions must be grounded in the **inference/eval results of the 30M model** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle: **run inference + eval on the 30M model first** (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the 9B editor → editor proposes targeted weight edits (not blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better 9B model. The 9B is only a reasoning tool; the artifact being improved is `san_latest.pt` (30M). Edits are never blind; every edit is justified by 30M inference/eval evidence. No toy micro tasks; use the proper standard benchmark (HumanEval@30).
+**Active weight-edit cycle (started 2026-11-10):** `weight_edit_9b.py` running in background (PID 2193418) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 07:00. Progress logged to `weight_edit_9b_run.log`.
+
+**Editor must be based on eval results**: the editor's decisions (whether 9B `qwopus-coder` or Gemma 4 12B it) MUST be grounded in the **inference/eval results of the 30M model (`san_latest.pt`)** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle MUST begin by running inference + eval on the 30M model first (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the editor → editor proposes targeted weight edits (NOT blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30. If the pass rate does not improve, revert the edits. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better editor model. The editor is only a reasoning tool; the artifact being improved is `san_latest.pt` (31M, 12 layers). Edits are NEVER blind; every edit MUST be justified by 30M inference/eval evidence using the HumanEval@30 benchmark. No toy micro tasks; use the proper standard benchmark (HumanEval@30). Both the 9B `qwopus-coder` (Ollama) and Gemma 4 12B it (HF cache) can serve as editors, but ALL editing decisions must be grounded in HumanEval@30 failures of `san_latest.pt`.
+
+**Gemma 4 12B it — Downloaded (November 2026)**
+
+**Download completed:** 2026-11-10 07:44:54 (authenticated HF download)
+
+**Files downloaded:**
+- `tokenizer.json` — 32 MB — `/home/kenpeter/work/coder/tokenizer.json` (moved to HF cache at `/home/kenpeter/.cache/huggingface/hub/models--google--gemma-4-12B-it/`)
+- `model.safetensors` — 22.28 GB — `/home/kenpeter/work/coder/model.safetensors` (moved to HF cache)
+
+**Repository:** `google/gemma-4-12B-it` (instruct/chat, 12B parameters)
+
+**Current status:** Model files in Hugging Face cache, ready for use
+
+**Use cases:**
+- Chat/instruction following via `transformers` or Ollama (after GGUF conversion)
+- Weight editing editor for the 31M SAN model (`san_latest.pt`)
+- Text generation and code completion
+
+**Note:** GGUF conversion not yet attempted; 22.28 GB safetensors format held in HF cache.
+
+**Location (remember):** `/home/kenpeter/.cache/huggingface/hub/models--google--gemma-4-12B-it` (HF cache; also originally `/home/kenpeter/work/coder/model.safetensors` + `tokenizer.json`).
+
+**Inference (Transformers):**
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+tok = AutoTokenizer.from_pretrained("google/gemma-4-12B-it")
+model = AutoModelForCausalLM.from_pretrained("google/gemma-4-12B-it", torch_dtype=torch.bfloat16, device_map="auto")
+inputs = tok("Write a Python function to reverse a string.", return_tensors="pt").to(model.device)
+out = model.generate(**inputs, max_new_tokens=128)
+print(tok.decode(out[0], skip_special_tokens=True))
+```
+
+**Editor grounding:** The Gemma 4 12B it model can serve as an alternative editor to the 9B `qwopus-coder`, following the same eval-first protocol (HumanEval@30 → failures → editor proposes edits → apply in place → re-evaluate).
+
+***/
 
 ## Single edit cycle (weight_edit_9b.py)
 

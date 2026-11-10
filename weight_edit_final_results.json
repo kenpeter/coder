@@ -1,0 +1,12 @@
+{
+  "original_loss": 1.0755983591079712,
+  "edited_loss_note": "metadata stays 1.0756 (expected behavior)",
+  "weight_key": "phi_pre",
+  "edit_amount": 0.01,
+  "weight_change_magnitude": 0.010000000707805157,
+  "max_weight_change": 0.01000000536441803,
+  "original_weight_mean": 4.0618582715978846e-05,
+  "edited_weight_mean": 1.783211700967513e-05,
+  "timestamp": "2026-11-08 10:04:44",
+  "edit_type": "final_check_test"
+}

@@ -70,7 +70,7 @@ from transformers import AutoTokenizer
 tok=AutoTokenizer.from_pretrained('bigcode/starcoder2-7b')
 if tok.pad_token is None: tok.pad_token=tok.eos_token
 
-deadline=datetime.datetime.now().replace(hour=20,minute=0,second=0)
+deadline=datetime.datetime.now().replace(hour=7,minute=0,second=0)
 if deadline<=datetime.datetime.now(): deadline+=datetime.timedelta(days=1)
 log("running 9B-editor loop until",deadline)
 best_score=0; cyc=0
