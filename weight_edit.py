@@ -47,11 +47,18 @@ def wfp(m):
         t=par.detach().float()
         lines.append(f"{n}: shape={tuple(t.shape)} mean={t.mean().item():.4f} std={t.std().item():.4f} norm={t.norm().item():.2f}")
     return "\n".join(lines)
-def ask_9b(prompt):
-    data={"model":"qwopus-coder","prompt":prompt,"stream":False,"options":{"temperature":0.2}}
-    req=urllib.request.Request("http://localhost:11434/api/generate",data=json.dumps(data).encode(),headers={"Content-Type":"application/json"})
-    with urllib.request.urlopen(req,timeout=120) as r:
-        return json.loads(r.read())["response"]
+_GEMMA=None
+_GEMMA_TOK=None
+def ask_gemma(prompt):
+    global _GEMMA,_GEMMA_TOK
+    if _GEMMA is None:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        _GEMMA_TOK=AutoTokenizer.from_pretrained("google/gemma-4-12B-it")
+        _GEMMA=AutoModelForCausalLM.from_pretrained("google/gemma-4-12B-it", torch_dtype=torch.bfloat16, device_map="cpu")
+    inputs=_GEMMA_TOK(prompt, return_tensors="pt")
+    with torch.no_grad():
+        out=_GEMMA.generate(**inputs, max_new_tokens=256, do_sample=False)
+    return _GEMMA_TOK.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
 def apply_edits(m,edits):
     sd=m.state_dict()
     for e in edits:
@@ -88,7 +95,7 @@ Weight fingerprint:
 {wfp(m)}
 Based on these concrete failures, propose 3-5 targeted weight edits as JSON list of objects with keys: param (full param name), scale (float near 1.0), add (float small). Only output JSON, no prose."""
     try:
-        resp=ask_9b(prompt)
+        resp=ask_gemma(prompt)
         mch=re.search(r'\[.*\]',resp,re.S)
         edits=json.loads(mch.group(0)) if mch else []
     except Exception as ex:
