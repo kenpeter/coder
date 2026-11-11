@@ -288,6 +288,7 @@ def ablate(m, edits, tok, top_k=3):
     base={k:v.detach().clone() for k,v in m.state_dict().items()}
     pi_base=eval_pindent(m,tok); ce_base=eval_ce(m)
     ce_lim=CE_REF*CE_GUARD         # absolute, not relative to this cycle
+    PI_FLOOR=0.90                  # never give back the cured disease
     rows=[]
     for e in edits:
         name=e.get('param')
@@ -305,13 +306,40 @@ def ablate(m, edits, tok, top_k=3):
             pi=eval_pindent(m,tok); ce=eval_ce(m)
             note='mirror' if c is not cands[0] else ''
             if ce > ce_lim:
-                rows.append((-1e9,c,pi,ce,(note+' ce_py guard').strip())); continue
+                # RECOVERY MODE. ce_py is already over the ceiling, so nothing
+                # that merely holds the line can score -- otherwise every edit
+                # gets -1e9 and the loop thrashes for the rest of the session.
+                # While over budget the only thing that scores is actually
+                # lowering ce_py, and only if it does not give back the cure.
+                if ce < ce_base and pi >= PI_FLOOR:
+                    rows.append((ce_base-ce,c,pi,ce,(note+' recovery').strip()))
+                else:
+                    rows.append((-1e9,c,pi,ce,(note+' ce_py guard').strip()))
+                continue
+            if pi < PI_FLOOR:
+                # p_indent is the disease metric and it is cured; do not trade
+                # it back for a small ce gain.
+                rows.append((-1e9,c,pi,ce,(note+' p_indent floor').strip())); continue
             rows.append((pi-pi_base,c,pi,ce,note))
     m.load_state_dict(base,strict=False)          # back to pre-edit state
     rows.sort(key=lambda r:-r[0])
     winners=[r for r in rows if r[0]>0][:top_k]
     if not winners and rows:                      # keep the least-bad, never none
         winners=[rows[0]]
+    # COMBINED-SET GUARD. Winners are scored one at a time but applied
+    # together, so their ce_py costs stack -- and can stack past a ceiling
+    # that each passed individually. Observed 16:02: boundary 0.06 scored
+    # +0.934 and boundary 0.03 scored +0.700; each alone was ce ~3.17 under
+    # the 3.2585 ceiling, but applied together they gave ce_py 3.401.
+    # (They are the same direction at two magnitudes, so keeping both was
+    # always double-dosing.) Re-check the union and drop the lowest-scoring
+    # winner until it fits.
+    while len(winners)>1:
+        m.load_state_dict({k:v.clone() for k,v in base.items()},strict=False)
+        apply_edits(m,[r[1] for r in winners])
+        if eval_ce(m)<=ce_lim: break
+        winners.pop()                              # rows are sorted best-first
+    m.load_state_dict(base,strict=False)
     return [r[1] for r in winners], rows
 
 def wfp(m):
