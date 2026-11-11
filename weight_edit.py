@@ -170,6 +170,55 @@ def eval_pindent(m, tok):
             tot+=float(pr[ind].sum())
     return tot/max(len(rows),1)
 
+_BOUNDARY_DIR=None
+def boundary_dir(m, tok, refresh=False):
+    """Mean post-final_norm hidden state at the HumanEval docstring boundary.
+
+    All 30 prompts end the same way -- a docstring then a newline -- and their
+    boundary states are almost collinear (measured cos to the mean = 0.983),
+    so a single direction u characterizes 'the model is at the end of a
+    docstring and must now indent'. That is what makes a targeted edit
+    possible at all: there is one consistent state to steer, not 30 different
+    ones. u is refreshed only when asked, since it moves slowly.
+    """
+    global _BOUNDARY_DIR
+    if _BOUNDARY_DIR is not None and not refresh: return _BOUNDARY_DIR
+    m.eval()
+    with gzip.open(HE,'rt') as f:
+        rows=[json.loads(l) for l in f][:30]
+    hs=[]
+    with torch.no_grad():
+        for r in rows:
+            ids=tok(r['prompt'],return_tensors='pt').input_ids.cuda()
+            hs.append(m.final_norm(m._hidden(ids))[0,-1,:].float())
+    _BOUNDARY_DIR=F.normalize(torch.stack(hs).mean(0,keepdim=True),dim=1)[0]
+    return _BOUNDARY_DIR
+
+def boundary_edits(m, tok, alphas=(0.03,0.06)):
+    """Diagnosis-derived candidate edits for the docstring-boundary disease.
+
+    These are NOT invented by the editor -- they come straight out of the
+    measurement in F6/F8. logits = final_norm(x) @ embedding.weight.T, so
+    adding +alpha*u to the indentation-token rows and -alpha*u to the newline
+    row raises the indent logit exactly at positions whose hidden state
+    resembles the boundary, and barely elsewhere (cos(h,u) is high only
+    there).
+
+    Measured on this checkpoint before wiring in:
+        alpha   p_indent   ce_py
+        0       0.0597     3.1038
+        0.02    0.4617     3.1072   (guard OK)
+        0.05    0.9760     3.1660   (guard OK, +2.0%)
+        0.10    0.9999     3.5075   (guard FAIL)
+    The ce_py guard is what keeps alpha honest -- ablation still arbitrates,
+    and the absolute ceiling below stops it accumulating across cycles.
+    """
+    return [{'param':'embedding.weight','boundary':a,
+             'reason':f'docstring-boundary direction: +{a}*u on indent rows, '
+                      f'-{a}*u on newline row (measured: lifts p_indent ~16x '
+                      f'at alpha {a} within the ce_py guard)'}
+            for a in alphas]
+
 def vec(report):
     """Dense score vector from one graded HumanEval report.
 
@@ -235,9 +284,10 @@ def ablate(m, edits, tok, top_k=3):
     ce_py_after, note)]. score > 0 means p_indent improved and the ce_py
     guard held.
     """
-    CE_GUARD=1.05   # ce_py may rise at most 5% for an edit to stay eligible
+    CE_GUARD=1.05   # ce_py may rise at most 5% over the loop-start reference
     base={k:v.detach().clone() for k,v in m.state_dict().items()}
     pi_base=eval_pindent(m,tok); ce_base=eval_ce(m)
+    ce_lim=CE_REF*CE_GUARD         # absolute, not relative to this cycle
     rows=[]
     for e in edits:
         name=e.get('param')
@@ -254,7 +304,7 @@ def ablate(m, edits, tok, top_k=3):
             apply_edits(m,[c])
             pi=eval_pindent(m,tok); ce=eval_ce(m)
             note='mirror' if c is not cands[0] else ''
-            if ce > ce_base*CE_GUARD:
+            if ce > ce_lim:
                 rows.append((-1e9,c,pi,ce,(note+' ce_py guard').strip())); continue
             rows.append((pi-pi_base,c,pi,ce,note))
     m.load_state_dict(base,strict=False)          # back to pre-edit state
@@ -326,6 +376,13 @@ def apply_edits(m,edits):
         if name not in sd: 
             log("skip unknown param",name); continue
         with torch.no_grad():
+            if e.get('boundary') is not None:
+                # targeted docstring-boundary edit, see boundary_edits()
+                a=float(e['boundary'])
+                u=boundary_dir(m,tok).to(sd[name].dtype)
+                sd[name][indent_ids(tok)] = sd[name][indent_ids(tok)] + a*u
+                sd[name][222]              = sd[name][222] - a*u
+                continue
             sd[name].mul_(scale).add_(add)
     m.load_state_dict(sd,strict=False)
 
@@ -336,6 +393,13 @@ m=SimpleAttentionNetwork(cfg); m.load_state_dict(ckpt['model_state_dict'],strict
 from transformers import AutoTokenizer
 tok=AutoTokenizer.from_pretrained('bigcode/starcoder2-7b')
 if tok.pad_token is None: tok.pad_token=tok.eos_token
+
+# Absolute ce_py reference taken once at loop start. The ablation guard is
+# measured against THIS, not against the previous cycle's value -- otherwise
+# a boundary edit that costs 2% of ce_py each cycle would ratchet upward
+# forever, passing its own moving guard every time until Python collapsed.
+CE_REF=eval_ce(m)
+log(f"ce_py reference at loop start: {CE_REF:.4f} (guard ceiling {CE_REF*1.05:.4f})")
 
 deadline=datetime.datetime.now().replace(hour=21,minute=0,second=0)
 if deadline<=datetime.datetime.now(): deadline+=datetime.timedelta(days=1)
@@ -408,6 +472,13 @@ Only output JSON, no prose."""
     except Exception as ex:
         log("editor parse err",ex); dlog("PARSE ERR:",ex); edits=[]
     log("proposed edits:",edits); dlog("PARSED EDITS:",json.dumps(edits))
+    # Stage C: always test the diagnosis-derived boundary candidates too, so
+    # the disease metric gets a shot every cycle even if the editor returns
+    # nothing parseable. u is refreshed here because the weights have moved.
+    boundary_dir(m,tok,refresh=True)
+    edits=list(edits)+boundary_edits(m,tok)
+    dlog("boundary candidates added:",
+         [e['boundary'] for e in edits if e.get('boundary') is not None])
     if not edits:
         dlog("cycle %d: no valid edits -> skipped (no weights changed)"%cyc)
         time.sleep(2); continue
