@@ -40,7 +40,7 @@ Components:
 | save_every | 2000 steps |
 | **num_workers (DataLoader)** | **8** (`fork`, `prefetch_factor=4`, `persistent_workers=False`) |
 | GPU power cap | **150 W** (`nvidia-smi -pl 150`) |
-| checkpoint | **`san_latest.pt` step 138508, loss 1.0756 (latest only, 1 model kept)** |
+| checkpoint | **`san_latest.pt` step 150000, loss field 1.1258 (stale metadata — see F2), latest only, 1 model kept** |
 
 Resume is the normal path: `run_train.sh` resumes from
 `checkpoints/san/san_latest.pt` (latest only, overwritten every 2000 steps).
@@ -278,13 +278,160 @@ the only checkpoint)
 
 **Roles**: The **editor** (**Gemma 4 12B it**, loaded from `gemma4_local/`) reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training.
 
-**Active weight-edit cycle (updated 2026-11-11):** `weight_edit.py` running in background (PID 2145083) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`. **Every cycle saves into `san_latest.pt` regardless of the score (always-keep).**
+**Active weight-edit cycle (updated 2026-11-11 13:48):** `weight_edit.py` running in background (PID 2962718) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`. **Every cycle saves into `san_latest.pt` regardless of the score (always-keep).**
 
 **Current status (2026-11-11):** the 30M model scores **0/30** on HumanEval@30
-(step 150000, train loss ~1.12). Greedy completions look like real Python but
-do not satisfy the unit tests (e.g. `fib` returns `(int(f) + int(f) - 1)`).
-Every cycle's edits are saved into `san_latest.pt` **regardless of the score**
-(keep rule = always), so the checkpoint keeps changing every cycle.
+(step 150000). Every cycle's edits are saved into `san_latest.pt`
+**regardless of the score** (keep rule = always), so the checkpoint keeps
+changing every cycle. See [Root-cause findings](#root-cause-findings-2026-11-11)
+below — the 0/30 is **not** primarily the editor's fault, and the earlier
+"loss ~1.12" reading was stale metadata, not a measurement.
+
+## Root-cause findings (2026-11-11)
+
+Measured, not assumed. Four findings, in order of how much they explain.
+
+### F1 — The score was never climbable: the model doesn't continue, it restarts
+
+**198 of 210** graded generations (7 cycles × 30 problems) begin with a
+**brand-new `def ...`** instead of continuing the function body after the
+docstring. The prompt ends `...return True\n    """\n`; the model answers with
+`\ndef get_current_in_list(...)`. Then it runs away with unclosed parens.
+
+Three *different* prompts (HumanEval/0, HumanEval/1, and a synthetic one) all
+produce the same `\ndef get_string...` shape, and the next-token argmax is the
+same token (222) for all three. Output entropy at the prompt boundary is
+**10.4 nats vs. max 10.8** — near-uniform. The model barely reads the prompt
+before writing.
+
+**Consequence:** the ladder is `syntax-valid → entry_point defined → asserts
+pass`, and the model is stuck on rung 1. Editor feedback of "0/30" is identical
+no matter what it tries, so there is nothing to climb.
+
+| stage reached | count (210 problems) |
+|---|---|
+| `syntax` (SyntaxError — never reached a test) | **191** |
+| `tests` (function ran, asserts executed) | 19 |
+| `load` | 0 |
+| **asserts passed** | **0 / 82** |
+
+Typical error: `SyntaxError: '(' was never closed (<gen>, line 77)`.
+
+### F2 — The checkpoint's `loss` field is stale metadata
+
+`san_latest.pt` reports `loss 1.1258`. That number is **frozen** —
+`weight_edit.py` copies the checkpoint dict and writes `model_state_dict`
+back without ever updating `loss`. `weight_edit_final_results.json` confirms
+the intent: `"metadata stays 1.0756 (expected behavior)"`.
+
+Measured instead: **CE 4.377** on 18 held-out `code_easy` windows.
+
+### F3 — `final_norm.scale` had collapsed (repaired)
+
+`ZCRMSNorm` computes `(1 + scale) * x / rms`, so `scale` is the logit-gain
+knob. A recorded Nov-8 snapshot (`all_weight_edit_summary.json`) shows
+`final_norm.scale` at **4.038**; it had fallen to **0.500** — gain 5.04 → 1.50,
+a **3.36× logit shrink**. The earlier editor proposed exactly this:
+`{'param': 'final_norm.scale', 'scale': 0.35}`, `scale 0.95, add -0.45`,
+`scale 0.98, add -0.15` — all **kept** under always-keep.
+
+**Repair (2026-11-11 13:41):** `final_norm.scale` mean `0.500 → 2.5`,
+**CE 4.377 → 1.483**, saved into `san_latest.pt`, recorded in
+`eval_results/knob_repair.json`. Training had logged main CE 0.985 at step
+150000 (`train_san.log:10344`), so 1.48 is the right order of magnitude.
+
+**But HumanEval stayed 0/30** — expected: greedy decoding is *argmax*, and
+argmax is invariant to a positive rescale of all logits. **Calibration was
+never the HumanEval blocker; F1 is.**
+
+### F4 — The model has never passed HumanEval, edited or not
+
+| date | step | score | editing active? |
+|---|---|---|---|
+| Oct 28 | 38162 | **0/164** | no (editing started Nov 7) |
+| Oct 29 | 52966 | **0/164** | no |
+| Oct 30 | 40000 | **0/3** | no |
+| Nov 11 | 150000 | 0/30 × 7 cycles | yes |
+
+Top-1 next-token accuracy on in-distribution shards is **~60%** — the model
+*ranks* correctly but assigns low probability (under-scaled logits, F3). On
+HumanEval prompts top-1 drops to **0.29–0.65**.
+
+**Implication:** no scalar edit to a handful of gates can move a metric that
+has been 0 since before any editing existed.
+
+## Plan: A → B → C (approved 2026-11-11)
+
+Three ordered stages. Each unblocks the next; do not skip.
+
+### A — Fix the ruler (make the score climbable)
+
+Today the editor is told only `0/30`, which never changes, so it receives no
+signal. Replace the single number with a **dense score vector**:
+
+| component | what it measures | why it can move |
+|---|---|---|
+| `syntax_rate` | % completions that `exec` cleanly | 191/210 fail here — big headroom |
+| `defined_rate` | % where `entry_point` exists | currently 0 |
+| `assert_rate` | asserts passed / total | currently 0/82 |
+| `ce` | loss on held-out `code_easy` | 1.483, continuous |
+
+Feed the **vector plus its delta since last cycle** to Gemma, alongside the
+existing per-test failure detail. Also pass the **fingerprint of what it tried
+last cycle and what happened**, so it can stop repeating itself.
+
+*Success for A:* the editor receives a number that changes when it acts.
+
+### B — Fix the hand (measure edits individually, widen the menu)
+
+Today: 5 edits proposed → all applied → all kept blind. Change to:
+
+1. **Ablation:** apply each proposed edit *separately*, score it on the cheap
+   signals (`ce`, `syntax_rate`), keep the winners. One edit at a time =
+   credit assignment.
+2. **Wider menu:** the current reflex is `blocks.{0..4}.attn_gate`. Add
+   `embedding.weight`, `final_norm.scale`, per-block `q_norm/k_norm.scale`
+   (attention temperature), `norm1.scale`, `hadamard_mlp.d1/d2`.
+3. **History in the prompt:** "last cycle you tried X, Δ was Y" — prevents the
+   identical-edit loop observed across all 7 cycles.
+4. **Direction search:** for scalar params, try `scale` up *and* down and keep
+   the better — currently Gemma only ever proposes one direction.
+
+*Single-checkpoint reconciliation:* `san_latest.pt` remains the only checkpoint
+and is still written every cycle (always-keep preserved). "Reject" is
+implemented as **reverting that one edit in memory before the save**, and the
+reject is logged to `weight_edit_run.log` — so nothing is ever lost from disk,
+but bad edits stop accumulating.
+
+*Success for B:* the score vector trends instead of flatlining.
+
+### C — Fix the disease (prompt-insensitivity)
+
+A and B are machinery; this is the target. The defect is that the model writes
+a new `def` regardless of prompt (F1). Edits must be aimed at what controls
+**how much of the prompt the model uses**:
+
+- `blocks.*.attn_gate` / `q_norm` / `k_norm` — attention temperature and how
+  sharply the model attends back to the docstring it was just given
+- `embedding.weight` rows for `"""`, `def`, indentation tokens — the
+  continuation-vs-restart decision
+- `smear gate` / `engram` params — previous-token and n-gram context that
+  decides "keep writing this body"
+
+Diagnose first: dump the attention distribution over the prompt at the exact
+token where the model chooses `\ndef` over an indented body line. Edit what
+that trace implicates, not what sounds plausible.
+
+*Success for C:* `defined_rate` > 0 — the first time the model writes the
+function it was actually asked to write.
+
+### Anti-goals
+
+- No gradients, no LoRA, no fine-tuning — this stays weight editing only.
+- No second checkpoint file; `san_latest.pt` stays the single artifact.
+- No blind edits: every proposal still traces to a graded HumanEval@30 failure.
+- No claiming success from `ce` alone — F3 proved a big CE win can leave
+  HumanEval at 0/30. `defined_rate` and `assert_rate` are the real targets.
 
 **Editor must be based on eval results**: the editor's decisions (Gemma 4 12B it) MUST be grounded in the **inference/eval results of the 30M model (`san_latest.pt`)** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle MUST begin by running inference + eval on the 30M model first (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the editor → editor proposes targeted weight edits (NOT blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30 → **save the edited weights into `san_latest.pt` (always; there is no other checkpoint and no revert)**. The eval still runs every cycle because the editor must be grounded in real HumanEval@30 failures — it just no longer gates the save. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better editor model. The editor is only a reasoning tool; the artifact being improved is `san_latest.pt` (31M, 12 layers). Edits are NEVER blind; every edit MUST be justified by 30M inference/eval evidence using the HumanEval@30 benchmark. No toy micro tasks; use the proper standard benchmark (HumanEval@30). ALL editing decisions must be grounded in HumanEval@30 failures of `san_latest.pt`.
 
@@ -321,8 +468,6 @@ print(tok.decode(out[0], skip_special_tokens=True))
 ```
 
 **Editor grounding:** Gemma 4 12B it is the editor, following the eval-first protocol (HumanEval@30 → failures → editor proposes edits → apply in place → re-evaluate).
-
-***/
 
 ## Single edit cycle (weight_edit.py) — CURRENT FLOW
 
@@ -362,6 +507,12 @@ All edits are applied in place to `san_latest.pt`. No gradients, no base/edited 
 Load model → measure (HumanEval@30) → fingerprint weights → ask Gemma for
 targeted `{param, scale, add}` edits → apply → measure again → **save over
 `san_latest.pt` (always, good or bad)** → repeat.
+
+> **Planned change (stage A/B, see [Plan: A → B → C](#plan-a--b--c-approved-2026-11-11)):**
+> step 2 will report a **dense score vector** (`syntax_rate`, `defined_rate`,
+> `assert_rate`, `ce`) instead of a bare `0/30`, and step 5–7 will **ablate
+> edits one at a time** so only the helpful ones are kept. `san_latest.pt`
+> stays the single checkpoint and is still written every cycle.
 
 > **Single-checkpoint policy:** `checkpoints/san/san_latest.pt` is the ONLY
 > checkpoint. There are no base/edited copies and no rollback — every cycle's
