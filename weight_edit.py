@@ -104,13 +104,22 @@ def eval_he(m,tok,dev='cuda',n=30,detail=False):
 # A bare "0/30" never changes, so the editor gets no signal. These four
 # components all have headroom to move (see abstraction.md, finding F1).
 import glob as _glob
-CE_FILES=sorted(_glob.glob('/home/kenpeter/work/data/_shards_final/_shards_code_easy/*.bin'))[:6]
-CE_WINS=[(f,o) for f in CE_FILES for o in (1000,9000,40000)]
+# Stage C: the ruler must point at PYTHON. HumanEval is Python, but
+# _shards_code_easy is 325/325 train-php shards -- measured CE 1.511 there
+# vs 3.104 on train-py and 2.752 on codegold-py. Optimizing the old window
+# was lowering PHP loss, which cannot help a Python benchmark.
+CE_PY=sorted(_glob.glob('/home/kenpeter/work/data/_shards_final/train-py-*.bin'))[:6]
+CE_PHP=sorted(_glob.glob('/home/kenpeter/work/data/_shards_final/_shards_code_easy/*.bin'))[:6]
+CE_WINS=[(f,o) for f in CE_PY for o in (1000,9000,40000)]
+CE_PHP_WINS=[(f,o) for f in CE_PHP for o in (1000,9000,40000)]
 
-def eval_ce(m):
-    """Cross-entropy on held-out code_easy windows (continuous, cheap)."""
+def eval_ce(m, wins=None):
+    """Cross-entropy on held-out PYTHON windows (continuous, cheap).
+
+    `wins` defaults to Python. Pass CE_PHP_WINS to check we did not break PHP.
+    """
     m.eval(); tot=0.0
-    for f,o in CE_WINS:
+    for f,o in (wins or CE_WINS):
         a=np.memmap(f,dtype=np.uint16,mode='r')
         if o+2049>len(a): continue
         x=torch.tensor(np.array(a[o:o+2048],dtype=np.int64))[None,:].cuda()
@@ -123,24 +132,33 @@ def vec(report):
     """Dense score vector from one graded HumanEval report.
 
     syntax_rate  completions that exec cleanly        (191/210 fail here)
-    defined_rate completions that define entry_point   (currently 0)
+    defined_rate completions that define entry_point   (currently ~0)
     assert_rate  individual asserts passed / total     (currently 0/103)
+    cont_rate    completions that CONTINUED the prompt (did not restart with
+                 a brand-new top-level def/class) -- this is the direct
+                 measure of the F1 disease (193/210 restart)
     """
     n=len(report) or 1
     syn=sum(1 for x in report if x['detail'].get('stage')!='syntax')
     dfr=sum(1 for x in report if x['detail'].get('stage')=='tests')
     tp=sum(x['detail'].get('tests_passed',0) for x in report)
     tt=sum(x['detail'].get('tests_total',0) for x in report)
+    def restarts(x):
+        g=x['generated'].lstrip()
+        return g.startswith('def ') or g.startswith('\ndef ') or g.startswith('class ')
+    cont=sum(1 for x in report if not restarts(x))
     return {'n':len(report),'passed':sum(1 for x in report if x['passed']),
             'syntax_rate':round(syn/n,4),'defined_rate':round(dfr/n,4),
             'assert_rate':round(tp/tt,4) if tt else 0.0,
+            'cont_rate':round(cont/n,4),
             'asserts':f'{tp}/{tt}'}
 
-def fmt_vec(v,ce=None):
+def fmt_vec(v,ce=None,ce_php=None):
     s=(f"passed {v['passed']}/{v['n']} | syntax_rate {v['syntax_rate']:.0%} | "
        f"defined_rate {v['defined_rate']:.0%} | assert_rate {v['assert_rate']:.0%} "
-       f"({v['asserts']})")
-    if ce is not None: s+=f" | ce {ce:.3f}"
+       f"({v['asserts']}) | cont_rate {v.get('cont_rate',0):.0%}")
+    if ce is not None: s+=f" | ce_py {ce:.3f}"
+    if ce_php is not None: s+=f" | ce_php {ce_php:.3f}"
     return s
 
 # Stage B: params worth offering the editor (the old menu was attn_gate only,
@@ -238,12 +256,12 @@ while datetime.datetime.now()<deadline:
     cyc+=1
     mp,mt,fails,report=eval_he(m,tok,detail=True)
     score=mp
-    v0=vec(report); ce0=eval_ce(m)
-    log(f"cycle {cyc} HumanEval@{mt} {mp}/{mt} | {fmt_vec(v0,ce0)}")
+    v0=vec(report); ce0=eval_ce(m); cep0=eval_ce(m,CE_PHP_WINS)
+    log(f"cycle {cyc} HumanEval@{mt} {mp}/{mt} | {fmt_vec(v0,ce0,cep0)}")
     rp=ROOT/f'eval_results/weight_edit_cycle_{cyc}.json'
     json.dump(report, open(rp,'w'), indent=1, default=str)
     dlog(f"graded report -> {rp}")
-    dlog(f"SCORE VECTOR before: {fmt_vec(v0,ce0)}")
+    dlog(f"SCORE VECTOR before: {fmt_vec(v0,ce0,cep0)}")
     failtxt=""
     for tid,prompt,gen,d in fails[:6]:
         failtxt+=(f"\n--- {tid} ---\nPrompt:\n{prompt[:350]}\nGenerated:\n{gen[:350]}\n"
@@ -261,13 +279,22 @@ while datetime.datetime.now()<deadline:
     prompt=f"""You are an editor for a 30M-param code model (SAN). You edit weights to make it generate BETTER Python.
 {hist}
 DENSE SCORE VECTOR (the real signal — pass count alone is stuck at {mp}/{mt} and cannot move):
-  before this cycle: {fmt_vec(v0,ce0)}
+  before this cycle: {fmt_vec(v0,ce0,cep0)}
 What each component means and why it can move:
   syntax_rate   % of completions that execute without SyntaxError. Currently LOW -> the model writes unclosed parens and brand-new 'def' statements instead of continuing the function body it was given. This is rung 1 of the ladder and the biggest headroom.
   defined_rate  % of completions that actually define the requested function (entry_point). Currently ~0 -> the model ignores the prompt and defines a DIFFERENT function.
   assert_rate   % of individual unit-test asserts passed. Currently 0 -> nothing has ever passed a test.
-  ce            cross-entropy on held-out training code. Lower is better; continuous, so it responds to small edits even when pass count does not.
-Ladder to climb: syntax_rate -> defined_rate -> assert_rate. Improving ce alone does NOT fix HumanEval.
+  cont_rate     % of completions that CONTINUED the prompt instead of restarting with a brand-new top-level 'def'. This is the single most important number: it directly measures the root defect. Raise this first.
+  ce_py         cross-entropy on held-out PYTHON code. THIS IS THE TARGET. Lower is better; continuous, so it responds to small edits even when pass count does not.
+  ce_php        cross-entropy on PHP code. A GUARD ONLY -- if ce_php rises a lot while ce_py falls, you are trading away general ability. Do not optimize ce_php.
+Ladder to climb: cont_rate -> syntax_rate -> defined_rate -> assert_rate. Improving ce alone does NOT fix HumanEval.
+
+MEASURED DIAGNOSIS (do not re-derive this, build on it):
+  - The model DOES know how to indent. Given 'def f():' plus a newline it puts P=0.79 on an indented body (argmax = tab). Add a docstring line and it collapses to P=0.95 on a plain newline and starts a NEW top-level statement.
+  - So the defect is specific to the docstring boundary: the model treats a triple-quoted string as the ENTIRE function body rather than as a header that an indented body follows.
+  - Python loss (ce_py ~3.10) is 2x worse than PHP loss (ce_php ~1.51). The model has seen far less Python. The headroom is in Python, which is why ce_py is the target.
+  - Training data contains almost no docstrings (~1 per million characters), so the pattern 'docstring then indented statement' is rare in what it learned.
+  - Highest-value edits therefore target: whether the model attends back to the prompt it was just given (q_norm/k_norm, attn_gate), and the relative logit weight of indentation tokens vs newline in embedding.weight.
 {failtxt}
 Weight fingerprint:
 {wfp(m)}
@@ -303,11 +330,11 @@ Only output JSON, no prose."""
         log(f"  rejected {[e for e in edits if e not in kept]}")
     apply_edits(m,kept)
     mp2,mt2,_,rep2=eval_he(m,tok,detail=True)
-    v1=vec(rep2); ce1=eval_ce(m)
-    log(f"after edit HumanEval@{mt2} {mp2}/{mt2} | {fmt_vec(v1,ce1)}")
-    dlog(f"cycle {cyc}: applied {len(edits)} -> {fmt_vec(v1,ce1)} (was {fmt_vec(v0,ce0)})")
+    v1=vec(rep2); ce1=eval_ce(m); cep1=eval_ce(m,CE_PHP_WINS)
+    log(f"after edit HumanEval@{mt2} {mp2}/{mt2} | {fmt_vec(v1,ce1,cep1)}")
+    dlog(f"cycle {cyc}: applied {len(edits)} -> {fmt_vec(v1,ce1,cep1)} (was {fmt_vec(v0,ce0,cep0)})")
     HIST.append({'cyc':cyc,'edits':f"proposed {edits} -> kept {kept}",
-                 'before':fmt_vec(v0,ce0),'after':fmt_vec(v1,ce1)})
+                 'before':fmt_vec(v0,ce0,cep0),'after':fmt_vec(v1,ce1,cep1)})
     # always keep: edits are applied in place to san_latest.pt regardless of
     # whether the score improved (single-checkpoint policy, no base copies).
     ck=copy.deepcopy(ckpt); ck['model_state_dict']={k:v.detach().cpu() for k,v in m.state_dict().items()}
