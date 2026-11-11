@@ -128,6 +128,48 @@ def eval_ce(m, wins=None):
         tot+=float(F.cross_entropy(lg.reshape(-1,lg.shape[-1]),y.reshape(-1)))
     return tot/max(len(CE_WINS),1)
 
+# token ids that decode to whitespace-only indentation (spaces / tabs).
+# Built once: the tokenizer emits DIFFERENT ids for a 4-space indent
+# depending on context (281 vs 283 were both observed), so keying on one id
+# silently measures ~0. Summing the whole whitespace class is robust.
+_INDENT_IDS=None
+def indent_ids(tok):
+    global _INDENT_IDS
+    if _INDENT_IDS is None:
+        out=[]
+        for t in range(tok.vocab_size):
+            s=tok.decode([t])
+            if s and all(c in ' \t' for c in s): out.append(t)
+        _INDENT_IDS=out
+    return _INDENT_IDS
+
+def eval_pindent(m, tok):
+    """Mean probability on whitespace-indentation tokens at the HumanEval
+    prompt boundary.
+
+    This is THE disease metric (finding F6). Each HumanEval prompt ends with
+    a docstring followed by a newline, so the ONLY correct next token is an
+    indent. The model instead collapses onto newline (222, P~0.94) and
+    restarts with a new top-level 'def'.
+
+    Measured once per proposal: 30 single forward passes, no generation, so
+    it is cheap enough to ablate against -- unlike cont_rate, which needs
+    full generation. ce_py averages over every token while this diseased
+    position is ~1 in 1000, so ce_py alone can improve while the disease is
+    untouched.
+    """
+    m.eval()
+    ind=indent_ids(tok)
+    with gzip.open(HE,'rt') as f:
+        rows=[json.loads(l) for l in f][:30]
+    tot=0.0
+    with torch.no_grad():
+        for r in rows:
+            ids=tok(r['prompt'],return_tensors='pt').input_ids.cuda()
+            pr=F.softmax(m(ids)[:,-1,:].float(),-1)[0]
+            tot+=float(pr[ind].sum())
+    return tot/max(len(rows),1)
+
 def vec(report):
     """Dense score vector from one graded HumanEval report.
 
@@ -153,12 +195,13 @@ def vec(report):
             'cont_rate':round(cont/n,4),
             'asserts':f'{tp}/{tt}'}
 
-def fmt_vec(v,ce=None,ce_php=None):
+def fmt_vec(v,ce=None,ce_php=None,pind=None):
     s=(f"passed {v['passed']}/{v['n']} | syntax_rate {v['syntax_rate']:.0%} | "
        f"defined_rate {v['defined_rate']:.0%} | assert_rate {v['assert_rate']:.0%} "
        f"({v['asserts']}) | cont_rate {v.get('cont_rate',0):.0%}")
     if ce is not None: s+=f" | ce_py {ce:.3f}"
     if ce_php is not None: s+=f" | ce_php {ce_php:.3f}"
+    if pind is not None: s+=f" | p_indent {pind:.4f}"
     return s
 
 # Stage B: params worth offering the editor (the old menu was attn_gate only,
@@ -174,23 +217,32 @@ def menu_txt():
     return ("Edit menu (use a spread of these, N = 0..11; do not use the same "
             "param every cycle):\n  " + ", ".join(PARAM_MENU))
 
-def ablate(m, edits, top_k=3):
-    """Stage B: score each proposed edit SEPARATELY, keep only the winners.
+def ablate(m, edits, tok, top_k=3):
+    """Stage B+C: score each proposed edit SEPARATELY, keep only the winners.
 
     One edit at a time = credit assignment. Without this, 5 edits are applied
     together and all are kept blind, so a no-op edit is indistinguishable from
     a good one (that is what accumulated into the final_norm.scale collapse).
 
-    Returns (winners, rows) where rows = [(delta_ce, edit, ce_after, note)].
-    Positive delta_ce = the edit lowered loss = it helped.
+    Ranking signal is delta p_indent -- the docstring-boundary disease (F6) --
+    NOT delta ce_py. ce_py is applied as a GUARD: an edit that buys a little
+    p_indent while wrecking Python loss is rejected outright. This ordering
+    matters because ce_py averages over all tokens while the diseased
+    position is ~1 in 1000, so ce_py alone would happily rate a no-op for
+    the disease as a win.
+
+    Returns (winners, rows) where rows = [(score, edit, p_indent_after,
+    ce_py_after, note)]. score > 0 means p_indent improved and the ce_py
+    guard held.
     """
+    CE_GUARD=1.05   # ce_py may rise at most 5% for an edit to stay eligible
     base={k:v.detach().clone() for k,v in m.state_dict().items()}
-    ce_base=eval_ce(m)
+    pi_base=eval_pindent(m,tok); ce_base=eval_ce(m)
     rows=[]
     for e in edits:
         name=e.get('param')
         if name not in base:
-            rows.append((0.0,e,None,'unknown param')); continue
+            rows.append((-1e9,e,None,None,'unknown param')); continue
         cands=[dict(e)]
         # direction search: scalar params are cheap and high-leverage, so also
         # try the opposite direction (Gemma only ever proposes one).
@@ -200,9 +252,11 @@ def ablate(m, edits, top_k=3):
         for c in cands:
             m.load_state_dict({k:v.clone() for k,v in base.items()},strict=False)
             apply_edits(m,[c])
-            ce=eval_ce(m)
+            pi=eval_pindent(m,tok); ce=eval_ce(m)
             note='mirror' if c is not cands[0] else ''
-            rows.append((ce_base-ce,c,ce,note))
+            if ce > ce_base*CE_GUARD:
+                rows.append((-1e9,c,pi,ce,(note+' ce_py guard').strip())); continue
+            rows.append((pi-pi_base,c,pi,ce,note))
     m.load_state_dict(base,strict=False)          # back to pre-edit state
     rows.sort(key=lambda r:-r[0])
     winners=[r for r in rows if r[0]>0][:top_k]
@@ -256,12 +310,12 @@ while datetime.datetime.now()<deadline:
     cyc+=1
     mp,mt,fails,report=eval_he(m,tok,detail=True)
     score=mp
-    v0=vec(report); ce0=eval_ce(m); cep0=eval_ce(m,CE_PHP_WINS)
-    log(f"cycle {cyc} HumanEval@{mt} {mp}/{mt} | {fmt_vec(v0,ce0,cep0)}")
+    v0=vec(report); ce0=eval_ce(m); cep0=eval_ce(m,CE_PHP_WINS); pi0=eval_pindent(m,tok)
+    log(f"cycle {cyc} HumanEval@{mt} {mp}/{mt} | {fmt_vec(v0,ce0,cep0,pi0)}")
     rp=ROOT/f'eval_results/weight_edit_cycle_{cyc}.json'
     json.dump(report, open(rp,'w'), indent=1, default=str)
     dlog(f"graded report -> {rp}")
-    dlog(f"SCORE VECTOR before: {fmt_vec(v0,ce0,cep0)}")
+    dlog(f"SCORE VECTOR before: {fmt_vec(v0,ce0,cep0,pi0)}")
     failtxt=""
     for tid,prompt,gen,d in fails[:6]:
         failtxt+=(f"\n--- {tid} ---\nPrompt:\n{prompt[:350]}\nGenerated:\n{gen[:350]}\n"
@@ -279,13 +333,14 @@ while datetime.datetime.now()<deadline:
     prompt=f"""You are an editor for a 30M-param code model (SAN). You edit weights to make it generate BETTER Python.
 {hist}
 DENSE SCORE VECTOR (the real signal — pass count alone is stuck at {mp}/{mt} and cannot move):
-  before this cycle: {fmt_vec(v0,ce0,cep0)}
+  before this cycle: {fmt_vec(v0,ce0,cep0,pi0)}
 What each component means and why it can move:
   syntax_rate   % of completions that execute without SyntaxError. Currently LOW -> the model writes unclosed parens and brand-new 'def' statements instead of continuing the function body it was given. This is rung 1 of the ladder and the biggest headroom.
   defined_rate  % of completions that actually define the requested function (entry_point). Currently ~0 -> the model ignores the prompt and defines a DIFFERENT function.
   assert_rate   % of individual unit-test asserts passed. Currently 0 -> nothing has ever passed a test.
   cont_rate     % of completions that CONTINUED the prompt instead of restarting with a brand-new top-level 'def'. This is the single most important number: it directly measures the root defect. Raise this first.
-  ce_py         cross-entropy on held-out PYTHON code. THIS IS THE TARGET. Lower is better; continuous, so it responds to small edits even when pass count does not.
+  p_indent      mean probability the model puts on a 4-space indent at the exact spot where each HumanEval prompt ends (right after the docstring). This is the cheapest and most direct measure of the disease, and it is what your edits are scored on during ablation. Higher is better. Currently ~0.05.
+  ce_py         cross-entropy on held-out PYTHON code. Lower is better; continuous, so it responds to small edits even when pass count does not. Used as a GUARD during ablation: an edit may not raise it more than 5%.
   ce_php        cross-entropy on PHP code. A GUARD ONLY -- if ce_php rises a lot while ce_py falls, you are trading away general ability. Do not optimize ce_php.
 Ladder to climb: cont_rate -> syntax_rate -> defined_rate -> assert_rate. Improving ce alone does NOT fix HumanEval.
 
@@ -321,20 +376,21 @@ Only output JSON, no prose."""
         time.sleep(2); continue
     before=copy.deepcopy(m.state_dict())
     # Stage B: ablate — score each edit on its own, keep only the winners.
-    kept,rows=ablate(m,edits)
-    dlog("ABLATION (delta_ce>0 means it helped):")
-    for d,e,ce,note in rows:
-        dlog(f"   delta_ce {d:+.4f}  {e}  ce_after={None if ce is None else round(ce,4)} {note}")
+    kept,rows=ablate(m,edits,tok)
+    dlog(f"ABLATION (score = delta p_indent at the docstring boundary; ce_py guard {1.05}):")
+    for d,e,pi,ce,note in rows:
+        dlog(f"   score {d:+.5f}  {e}  p_indent_after={None if pi is None else round(pi,5)} "
+             f"ce_py_after={None if ce is None else round(ce,4)} {note}")
     log(f"ablation: {len(edits)} proposed -> {len(kept)} kept")
     if kept!=edits:
         log(f"  rejected {[e for e in edits if e not in kept]}")
     apply_edits(m,kept)
     mp2,mt2,_,rep2=eval_he(m,tok,detail=True)
-    v1=vec(rep2); ce1=eval_ce(m); cep1=eval_ce(m,CE_PHP_WINS)
-    log(f"after edit HumanEval@{mt2} {mp2}/{mt2} | {fmt_vec(v1,ce1,cep1)}")
-    dlog(f"cycle {cyc}: applied {len(edits)} -> {fmt_vec(v1,ce1,cep1)} (was {fmt_vec(v0,ce0,cep0)})")
+    v1=vec(rep2); ce1=eval_ce(m); cep1=eval_ce(m,CE_PHP_WINS); pi1=eval_pindent(m,tok)
+    log(f"after edit HumanEval@{mt2} {mp2}/{mt2} | {fmt_vec(v1,ce1,cep1,pi1)}")
+    dlog(f"cycle {cyc}: applied {len(edits)} -> {fmt_vec(v1,ce1,cep1,pi1)} (was {fmt_vec(v0,ce0,cep0,pi0)})")
     HIST.append({'cyc':cyc,'edits':f"proposed {edits} -> kept {kept}",
-                 'before':fmt_vec(v0,ce0,cep0),'after':fmt_vec(v1,ce1,cep1)})
+                 'before':fmt_vec(v0,ce0,cep0,pi0),'after':fmt_vec(v1,ce1,cep1,pi1)})
     # always keep: edits are applied in place to san_latest.pt regardless of
     # whether the score improved (single-checkpoint policy, no base copies).
     ck=copy.deepcopy(ckpt); ck['model_state_dict']={k:v.detach().cpu() for k,v in m.state_dict().items()}
