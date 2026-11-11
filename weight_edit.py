@@ -140,7 +140,7 @@ if tok.pad_token is None: tok.pad_token=tok.eos_token
 
 deadline=datetime.datetime.now().replace(hour=21,minute=0,second=0)
 if deadline<=datetime.datetime.now(): deadline+=datetime.timedelta(days=1)
-log("running 9B-editor loop until",deadline)
+log("running editor loop until",deadline)
 best_score=0; cyc=0
 while datetime.datetime.now()<deadline:
     cyc+=1
@@ -171,7 +171,7 @@ Based on these concrete graded failures, propose 3-5 targeted weight edits as JS
         mch=re.search(r'\[.*\]',resp,re.S)
         edits=json.loads(mch.group(0)) if mch else []
     except Exception as ex:
-        log("9b parse err",ex); dlog("PARSE ERR:",ex); edits=[]
+        log("editor parse err",ex); dlog("PARSE ERR:",ex); edits=[]
     log("proposed edits:",edits); dlog("PARSED EDITS:",json.dumps(edits))
     if not edits:
         dlog("cycle %d: no valid edits -> skipped (no weights changed)"%cyc)

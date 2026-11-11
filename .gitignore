@@ -19,3 +19,6 @@ eval_results/
 training.pid
 cron_log.txt
 train_san_run*.log
+
+# local symlinks into HF cache (absolute paths, not portable)
+gemma4_local/
