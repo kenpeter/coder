@@ -278,21 +278,34 @@ the only checkpoint)
 
 **Roles**: The **editor** (**Gemma 4 12B it**, loaded from `gemma4_local/`) reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training.
 
-**Active weight-edit cycle (running 2026-11-11 ~13:48 → 21:00):** `weight_edit.py` running in background against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`. **Every cycle saves into `san_latest.pt` regardless of the score (always-keep).** As of ~19:00 the loop is on cycle 11 with the *pre-F9* grader; restarting on the F9 fix surfaces the true `assert_rate` (1%, see F9).
+**Weight-edit cycle — PAUSED (was running 2026-11-11 ~13:48 → paused 19:20):**
+`weight_edit.py` ran in background against `san_latest.pt`, applying
+HumanEval@30-grounded edits in place. Editor is **Gemma 4 12B it** loaded from
+the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to
+`weight_edit_run.log`. **Every cycle saved into `san_latest.pt` regardless of the
+score (always-keep).** The process was killed at 19:20 (PID 1415547); the
+checkpoint on disk is the last saved state (192 MB, written 19:18). It can be
+resumed later by re-running `python3 weight_edit.py` — the loop re-bases
+`CE_REF` from the current checkpoint on start, so the guard stays correct.
 
-**Current status (2026-11-11, ~19:00):** the 30M model's *true* HumanEval@30
-capability is **assert_rate 1% (1/119)** — not 0%. Stage C cured the restart
-disease (F1): `cont_rate`/`syntax_rate`/`defined_rate` all went 17% → ~100% and
-`p_indent` 0.06 → 0.99 (the 16:04 breakthrough). But a grader bug (F9) had
-been reporting `assert_rate` as structurally 0; and the cure exposed a new
-failure mode, the infinite-whitespace loop (F10) — the model now indents
-forever instead of writing a body. Every cycle's edits are saved into
-`san_latest.pt` **regardless of the score** (keep rule = always), so the
-checkpoint keeps changing every cycle. See
-[Root-cause findings](#root-cause-findings-2026-11-11) and
-[Stage C](#stage-c--the-boundary-edit-and-the-cure-mechanism--bugs-fought)
+**Final verified state (2026-11-11, 19:19:47, cycle 13):** the 30M model's
+*true* HumanEval@30 capability is **assert_rate 1% (1/119)** — not 0%. Stage C
+cured the restart disease (F1): `cont_rate`/`syntax_rate`/`defined_rate` all went
+17% → ~97–100% and `p_indent` 0.06 → ~0.99 (the 16:04 breakthrough). The cure
+exposed a new failure mode, the infinite-whitespace loop (F10) — the model now
+indents forever instead of writing a body. Final cycle vector:
+
+```
+syntax_rate 97% | defined_rate 97% | assert_rate 1% (1/119) | cont_rate 100%
+ce_py 3.218 | ce_php 1.597 | p_indent 0.9968
+```
+
+Every cycle's edits were saved into `san_latest.pt` **regardless of the score**
+(keep rule = always). See [Root-cause findings](#root-cause-findings-2026-11-11)
+and [Stage C](#stage-c--the-boundary-edit-and-the-cure-mechanism--bugs-fought)
 below — the 0/30 was not primarily the editor's fault, the "loss ~1.12" reading
-was stale metadata, and the headline 0/30 figure was partly a grader artifact.
+was stale metadata, the headline 0/30 figure was partly a grader artifact (F9),
+and the residual 1% is a genuine capability gap (F10), not a measurement error.
 
 ## Root-cause findings (2026-11-11)
 
