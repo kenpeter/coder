@@ -181,11 +181,11 @@ Based on these concrete graded failures, propose 3-5 targeted weight edits as JS
     mp2,mt2,_=eval_he(m,tok)
     log(f"after edit HumanEval@{mt2} {mp2}/{mt2}")
     dlog(f"cycle {cyc}: applied {len(edits)} edits -> {mp2}/{mt2} (was {mp}/{mt})")
-    if mp2>=mp:
-        # keep
+    if mp2>mp:
+        # keep ONLY on real improvement (abstraction.md policy)
         ck=copy.deepcopy(ckpt); ck['model_state_dict']={k:v.detach().cpu() for k,v in m.state_dict().items()}
         torch.save(ck,CKPT); log("kept edit, saved in place",CKPT)
-        best_score=max(best_score,mp2); dlog(f"cycle {cyc}: DECISION=KEEP (saved to {CKPT})")
+        best_score=max(best_score,mp2); dlog(f"cycle {cyc}: DECISION=KEEP (improved {mp}->{mp2}, saved to {CKPT})")
     else:
         m.load_state_dict(before,strict=True); m.cuda(); log("reverted edit")
         dlog(f"cycle {cyc}: DECISION=REVERT (restored pre-edit weights)")
