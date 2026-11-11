@@ -360,6 +360,66 @@ HumanEval prompts top-1 drops to **0.29–0.65**.
 **Implication:** no scalar edit to a handful of gates can move a metric that
 has been 0 since before any editing existed.
 
+### F5 — The CE ruler was measuring PHP, not Python *(found 15:00, Stage C)*
+
+The `ce` component added in Stage A read from `_shards_code_easy`. That
+directory is **325 of 325 `train-php-*` shards — zero Python.** So Stage B's
+`ablate()` was making every keep/reject decision on **PHP** loss.
+
+Measured on the checkpoint at that moment:
+
+| window | CE |
+|---|---|
+| `_shards_code_easy` (100% PHP) — *the ruler in use* | **1.5113** |
+| `train-py` | **3.1040** |
+| `codegold-py` | **2.7520** |
+
+Python loss is **2× worse** than PHP loss, so there was headroom in exactly
+the direction the ruler was not pointing. Training data overall (flat farm,
+1626 shards) is `php 487 · py 318 · js 215 · codegold-py 153 · java 152 ·
+cpp 86 · cs 83 · …` — Python is ~29% of it, not 0%.
+
+**Fix:** `eval_ce()` now defaults to `train-py` windows (`ce_py` = target);
+PHP is still measured as `ce_php` and shown as a **guard** so a Python gain
+cannot silently trade away general ability. `ablate()` now credits edits by
+Δ`ce_py`.
+
+### F6 — The defect is specific to the docstring boundary *(found 15:00, Stage C)*
+
+The restart behaviour is not uniform — it switches on at exactly one point:
+
+| prompt | P(indent) | P(newline) | argmax |
+|---|---|---|---|
+| `def f():` | 0.005 | 0.058 | `\n   ` |
+| `def f():` + newline | **0.792** | 0.166 | **`\t` ← correct** |
+| + short docstring | 0.037 | **0.952** | `\n` ← breaks |
+| + doctest lines | 0.017 | 0.970 | `\n` |
+| real HumanEval prompts | ~0.055 | ~0.935 | `\n` |
+
+**The model does know how to indent.** After `def f():` it puts 0.79 on an
+indented body and its argmax is a tab. The instant a `"""` docstring is
+present it treats the docstring as the *entire function body* and moves to a
+new top-level statement. Free generation confirms it: `def add(a, b):` →
+`\treturn (`, but `def add(a, b):\n"""Doc."""` → `\n# 1.\n\n# 2.`
+
+### F7 — Training data contains almost no docstrings
+
+Decoded sample of `train-py`: **6 triple-quotes in 6.56 M characters**
+(~0.91 per MB); `train-php` is similar (7 in 5.25 M). The pattern
+*"docstring, then an indented statement"* is therefore extremely rare in
+what the model learned, which is why it has no prior for what follows `"""`.
+
+### F8 — Added `cont_rate`: the score vector now measures the disease itself
+
+`cont_rate` = fraction of completions that did **not** begin a brand-new
+top-level `def`/`class`. It is the direct numerical form of F1 and is the
+first rung of the ladder now:
+
+**`cont_rate` (3%) → `syntax_rate` (7–20%) → `defined_rate` (7–20%) → `assert_rate` (0%)**
+
+The editor prompt carries the measured diagnosis from F5–F7 verbatim, so
+Gemma builds on it instead of re-deriving it each cycle.
+
 ## Plan: A → B → C (approved 2026-11-11)
 
 Three ordered stages. Each unblocks the next; do not skip.
