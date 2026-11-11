@@ -248,7 +248,7 @@ Methods to try:
 2. **LoRA‑style rank‑injection** – add a small LoRA adapter (rank = 8) fine‑tuned on the 4‑question coding eval set, then merge back into base weights.
 3. **In‑batch editing** – edit weights directly on the 31M SAN model (`san_latest.pt`, 12 layers) using cycle-based editing; no 9B teacher model involved.
 
-After each edit, re‑run the **cron‑driven evaluation loop** (every 30 min) with 4 coding questions. If the pass rate improves, keep the edit; otherwise revert and try the next method.
+After each edit, re‑run the **cron‑driven evaluation loop** (every 30 min) with 4 coding questions. The result is recorded; the edit stays in `san_latest.pt` either way (single-checkpoint, always-keep policy).
 
 Suggested first edit: **subtract the looping direction** identified by probing MLP activations on the 4‑question eval set, then verify with the cron loop.
 
@@ -471,13 +471,14 @@ decoded, and generated **greedy, `max_new_tokens=512`** on CPU (bf16).
 
 → parsed with `re.search(r'\[.*\]', resp, re.S)` + `json.loads`, then each edit
 becomes `tensor.mul_(scale).add_(add)` (unknown param names are skipped and
-logged). Re-eval follows, then keep/revert.
+logged). Re-eval follows, then the edited weights are saved into
+`san_latest.pt` (always).
 
 ### Everything is logged (for later debugging / improvement)
 
 | file | contents |
 |---|---|
-| `weight_edit_run.log` | one line per cycle: eval before, proposed edits, eval after, **KEEP / REVERT** |
+| `weight_edit_run.log` | one line per cycle: eval before, proposed edits, eval after, **KEEP (always) + score before → after** |
 | `weight_edit_debug.log` | **full prompt sent to Gemma, full raw Gemma response, parsed edits, decision** — every cycle |
 | `eval_results/weight_edit_cycle_<n>.json` | full 30-problem graded report (prompt, generated code, stage, tests passed/total, failing asserts) per cycle |
 
