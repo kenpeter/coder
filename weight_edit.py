@@ -100,6 +100,49 @@ def eval_he(m,tok,dev='cuda',n=30,detail=False):
     if detail:
         return passed,len(rows),fails,report
     return passed,len(rows),fails
+# ─── Stage A: dense score vector ─────────────────────────────────────
+# A bare "0/30" never changes, so the editor gets no signal. These four
+# components all have headroom to move (see abstraction.md, finding F1).
+import glob as _glob
+CE_FILES=sorted(_glob.glob('/home/kenpeter/work/data/_shards_final/_shards_code_easy/*.bin'))[:6]
+CE_WINS=[(f,o) for f in CE_FILES for o in (1000,9000,40000)]
+
+def eval_ce(m):
+    """Cross-entropy on held-out code_easy windows (continuous, cheap)."""
+    m.eval(); tot=0.0
+    for f,o in CE_WINS:
+        a=np.memmap(f,dtype=np.uint16,mode='r')
+        if o+2049>len(a): continue
+        x=torch.tensor(np.array(a[o:o+2048],dtype=np.int64))[None,:].cuda()
+        y=x[:,1:].clone()
+        with torch.no_grad(): lg=m(x)[:,:-1,:].float()
+        tot+=float(F.cross_entropy(lg.reshape(-1,lg.shape[-1]),y.reshape(-1)))
+    return tot/max(len(CE_WINS),1)
+
+def vec(report):
+    """Dense score vector from one graded HumanEval report.
+
+    syntax_rate  completions that exec cleanly        (191/210 fail here)
+    defined_rate completions that define entry_point   (currently 0)
+    assert_rate  individual asserts passed / total     (currently 0/103)
+    """
+    n=len(report) or 1
+    syn=sum(1 for x in report if x['detail'].get('stage')!='syntax')
+    dfr=sum(1 for x in report if x['detail'].get('stage')=='tests')
+    tp=sum(x['detail'].get('tests_passed',0) for x in report)
+    tt=sum(x['detail'].get('tests_total',0) for x in report)
+    return {'n':len(report),'passed':sum(1 for x in report if x['passed']),
+            'syntax_rate':round(syn/n,4),'defined_rate':round(dfr/n,4),
+            'assert_rate':round(tp/tt,4) if tt else 0.0,
+            'asserts':f'{tp}/{tt}'}
+
+def fmt_vec(v,ce=None):
+    s=(f"passed {v['passed']}/{v['n']} | syntax_rate {v['syntax_rate']:.0%} | "
+       f"defined_rate {v['defined_rate']:.0%} | assert_rate {v['assert_rate']:.0%} "
+       f"({v['asserts']})")
+    if ce is not None: s+=f" | ce {ce:.3f}"
+    return s
+
 def wfp(m):
     lines=[]
     for n,par in m.named_parameters():
@@ -141,15 +184,17 @@ if tok.pad_token is None: tok.pad_token=tok.eos_token
 deadline=datetime.datetime.now().replace(hour=21,minute=0,second=0)
 if deadline<=datetime.datetime.now(): deadline+=datetime.timedelta(days=1)
 log("running editor loop until",deadline)
-best_score=0; cyc=0
+best_score=0; cyc=0; HIST=[]   # Stage A: per-cycle history shown to the editor
 while datetime.datetime.now()<deadline:
     cyc+=1
     mp,mt,fails,report=eval_he(m,tok,detail=True)
     score=mp
-    log(f"cycle {cyc} 30M eval HumanEval@{mt} {mp}/{mt} fails={len(fails)}")
+    v0=vec(report); ce0=eval_ce(m)
+    log(f"cycle {cyc} HumanEval@{mt} {mp}/{mt} | {fmt_vec(v0,ce0)}")
     rp=ROOT/f'eval_results/weight_edit_cycle_{cyc}.json'
     json.dump(report, open(rp,'w'), indent=1, default=str)
     dlog(f"graded report -> {rp}")
+    dlog(f"SCORE VECTOR before: {fmt_vec(v0,ce0)}")
     failtxt=""
     for tid,prompt,gen,d in fails[:6]:
         failtxt+=(f"\n--- {tid} ---\nPrompt:\n{prompt[:350]}\nGenerated:\n{gen[:350]}\n"
@@ -157,12 +202,32 @@ while datetime.datetime.now()<deadline:
         if d.get('error'): failtxt+=f"Error: {d['error']}\n"
         for f in d.get('fails',[]):
             failtxt+=f"  FAILING TEST #{f['line']}: {f['assert']}  ->  {f['err']}\n"
-    prompt=f"""You are an editor for a 30M-param code model (SAN). Eval: HumanEval@{mt} pass {mp}/{mt}. Each failure is graded per unit test (not just pass/fail): stage, how many asserts passed, and the exact failing assertion + error.
-Failing problems with their generated (wrong) code and per-test grading:
+    hist=""
+    if HIST:
+        hist="\nYour previous attempts this session (what you tried, then what happened):\n"
+        for h in HIST[-6:]:
+            hist+=f"  cycle {h['cyc']}: tried {h['edits']}\n      before -> {h['before']}\n      after  -> {h['after']}\n"
+        hist+=("  Do NOT repeat an edit that already produced no gain. Change the "
+               "parameter, the direction, or the magnitude.\n")
+    prompt=f"""You are an editor for a 30M-param code model (SAN). You edit weights to make it generate BETTER Python.
+{hist}
+DENSE SCORE VECTOR (the real signal — pass count alone is stuck at {mp}/{mt} and cannot move):
+  before this cycle: {fmt_vec(v0,ce0)}
+What each component means and why it can move:
+  syntax_rate   % of completions that execute without SyntaxError. Currently LOW -> the model writes unclosed parens and brand-new 'def' statements instead of continuing the function body it was given. This is rung 1 of the ladder and the biggest headroom.
+  defined_rate  % of completions that actually define the requested function (entry_point). Currently ~0 -> the model ignores the prompt and defines a DIFFERENT function.
+  assert_rate   % of individual unit-test asserts passed. Currently 0 -> nothing has ever passed a test.
+  ce            cross-entropy on held-out training code. Lower is better; continuous, so it responds to small edits even when pass count does not.
+Ladder to climb: syntax_rate -> defined_rate -> assert_rate. Improving ce alone does NOT fix HumanEval.
 {failtxt}
 Weight fingerprint:
 {wfp(m)}
-Based on these concrete graded failures, propose 3-5 targeted weight edits as JSON list of objects with keys: param (full param name), scale (float near 1.0), add (float small). Only output JSON, no prose."""
+Propose 3-5 targeted weight edits as a JSON list of objects with keys: param (full param name), scale (float near 1.0), add (float small).
+Rules:
+- Justify each edit from the graded failures above (which stage fails, which assert).
+- Prefer params that control whether the model CONTINUES the prompt instead of restarting: attention q/k norms, attn_gate, embedding rows, norm scales.
+- Vary direction: if you scaled a param down last cycle and nothing moved, try up.
+Only output JSON, no prose."""
     dlog(f"=== cycle {cyc} | eval before: {mp}/{mt} | fails={len(fails)} ===")
     dlog("--- PROMPT SENT TO EDITOR ---"); dlog(prompt); dlog("--- END PROMPT ---")
     try:
@@ -178,9 +243,11 @@ Based on these concrete graded failures, propose 3-5 targeted weight edits as JS
         time.sleep(2); continue
     before=copy.deepcopy(m.state_dict())
     apply_edits(m,edits)
-    mp2,mt2,_=eval_he(m,tok)
-    log(f"after edit HumanEval@{mt2} {mp2}/{mt2}")
-    dlog(f"cycle {cyc}: applied {len(edits)} edits -> {mp2}/{mt2} (was {mp}/{mt})")
+    mp2,mt2,_,rep2=eval_he(m,tok,detail=True)
+    v1=vec(rep2); ce1=eval_ce(m)
+    log(f"after edit HumanEval@{mt2} {mp2}/{mt2} | {fmt_vec(v1,ce1)}")
+    dlog(f"cycle {cyc}: applied {len(edits)} -> {fmt_vec(v1,ce1)} (was {fmt_vec(v0,ce0)})")
+    HIST.append({'cyc':cyc,'edits':edits,'before':fmt_vec(v0,ce0),'after':fmt_vec(v1,ce1)})
     # always keep: edits are applied in place to san_latest.pt regardless of
     # whether the score improved (single-checkpoint policy, no base copies).
     ck=copy.deepcopy(ckpt); ck['model_state_dict']={k:v.detach().cpu() for k,v in m.state_dict().items()}
