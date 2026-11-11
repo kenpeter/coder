@@ -274,9 +274,15 @@ if accuracy ↑ → save
 
 *No gradients; weight editing over raw numbers; verification via forward passes. The SAN model is 31M parameters (12 layers) — trained and edited within this environment. The 9B Qwopus3-5-9B-Coder-Flash model (5.78 GB, GGUF format, Ollama-cached) is a separate transformer-based LLM architecture and can perform weight editing on the 31M SAN model via task-vector alignment and merge-based methods. All weight editing cycles run on `san_latest.pt` (31M, 12 layers) with the 9B model providing teacher guidance for edit direction identification. Cumulative cycles across all sessions: ~2000+. Loss improvement demonstrated during editing: actual model loss decreased from ~1.05 → 0.9986 (best) → 1.0282 (final) across previous editing cycles. Base checkpoint preserved at step 138508, loss 1.0756.
 
-**Roles**: The **9B model** (`qwopus-coder`, Ollama) is the **editor** — it reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training. Ollama 9B is running (`ollama serve`).
+**Roles**: The **editor** (currently **Gemma 4 12B it**; previously 9B `qwopus-coder` via Ollama) reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training.
 
-**Active weight-edit cycle (started 2026-11-10):** `weight_edit_9b.py` running in background (PID 2193418) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 07:00. Progress logged to `weight_edit_9b_run.log`.
+**Active weight-edit cycle (updated 2026-11-11):** `weight_edit.py` running in background (PID 1665312) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`.
+
+**Current status (2026-11-11):** the 30M model scores **0/30** on HumanEval@30
+(step 150000, train loss ~1.12). Greedy completions look like real Python but
+do not satisfy the unit tests (e.g. `fib` returns `(int(f) + int(f) - 1)`).
+Edits are kept only when the pass rate does not drop, so as of now nothing has
+improved the score — no "kept edit" entries in `weight_edit_run.log`.
 
 **Editor must be based on eval results**: the editor's decisions (whether 9B `qwopus-coder` or Gemma 4 12B it) MUST be grounded in the **inference/eval results of the 30M model (`san_latest.pt`)** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle MUST begin by running inference + eval on the 30M model first (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the editor → editor proposes targeted weight edits (NOT blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30. If the pass rate does not improve, revert the edits. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better editor model. The editor is only a reasoning tool; the artifact being improved is `san_latest.pt` (31M, 12 layers). Edits are NEVER blind; every edit MUST be justified by 30M inference/eval evidence using the HumanEval@30 benchmark. No toy micro tasks; use the proper standard benchmark (HumanEval@30). Both the 9B `qwopus-coder` (Ollama) and Gemma 4 12B it (HF cache) can serve as editors, but ALL editing decisions must be grounded in HumanEval@30 failures of `san_latest.pt`.
 
@@ -316,29 +322,175 @@ print(tok.decode(out[0], skip_special_tokens=True))
 
 ***/
 
-## Single edit cycle (weight_edit_9b.py)
+## Single edit cycle (weight_edit.py) — CURRENT FLOW
 
-**Roles (emphasized): the 9B model (`qwopus-coder`) is the EDITOR; the 30M SAN model (`san_latest.pt`) is the EDITEE.** The 9B only reasons and proposes edits; the artifact being improved is `san_latest.pt`. All edits are applied in place to `san_latest.pt`.
+**Roles: Gemma 4 12B it is the EDITOR; the 30M SAN model (`san_latest.pt`) is the EDITEE.**
+All edits are applied in place to `san_latest.pt`. No gradients, no base/edited copies.
 
-### How the 9B uses HumanEval pass/fail feedback to edit weights
-Each cycle:
-1. Run HumanEval@30 on the 30M model → get pass count + list of failing problems with their prompts, generated (wrong) code, and error messages.
-2. Build a weight fingerprint (param name, shape, mean, std, norm) for every tensor.
-3. Send the 9B a prompt containing: the pass/fail summary, the failing problems' prompts + generated code + errors, and the weight fingerprint. The 9B is instructed to reason about *why* those failures occur (e.g. syntax errors → output head / norm issue; wrong logic → attention/MLP direction) and propose targeted deltas.
-4. The 9B returns a JSON list of edits `{param, scale, add}` targeting specific parameters (e.g. `blocks.10.attn.q_norm.scale`, `final_norm.scale`, `blocks.11.hadamard_mlp.d3`).
-5. Apply the deltas in place to `san_latest.pt`, re-run HumanEval@30.
-6. Keep the edit if pass rate did not drop; otherwise revert. The outcome (pass/fail counts) is reported via Telegram every 30 min, so the loop's progress is visible.
+### Exact flow of one cycle (as implemented in `weight_edit.py`)
 
-### Launching the 9B model (Ollama)
-```bash
-ollama serve > /tmp/opencode/ollama.log 2>&1 &
-# model is already cached:
-ollama list   # -> qwopus-coder:latest (5.8 GB)
-# sanity check:
-echo "hi" | ollama run qwopus-coder "say hi in one word"
-# API used by weight_edit_9b.py:
-# POST http://localhost:11434/api/generate  {"model":"qwopus-coder","prompt":...,"stream":false}
 ```
+1.  Load san_latest.pt (12L, ~31M params) into CUDA + starcoder2-7b tokenizer
+        │
+2.  EVAL  ── HumanEval@30 on the 30M model
+        │    generate 160 tokens, greedy (temperature 0.0)
+        │    grade PER TEST (not just pass/fail):
+        │      stage = syntax | load | tests
+        │      tests_passed / tests_total + the exact failing assert + error
+        │    → pass count  +  per-problem grading (see below)
+        │
+3.  Build WEIGHT FINGERPRINT: for every tensor → name, shape, mean, std, norm
+        │
+4.  EDITOR  ── Gemma 4 12B it (CPU, bf16, local dir gemma4_local)
+        │    prompt = fail summary + failing problems + fingerprint
+        │    instruction: reason about WHY they fail, return JSON only
+        │    → [{"param": "...", "scale": 1.01, "add": 0.0}, ...]  (3–5 edits)
+        │
+5.  APPLY  ── for each edit:  tensor = tensor * scale + add   (in memory)
+        │
+6.  RE-EVAL  ── HumanEval@30 again on the edited model
+        │
+7.  DECIDE
+        │   pass rate did not drop  → KEEP: save edited state_dict over san_latest.pt
+        │   pass rate dropped       → REVERT: load the pre-edit state_dict
+        │
+8.  loop back to 2 until the deadline (21:00)
+```
+
+### Plain-text summary of the loop
+Load model → measure (HumanEval@30) → fingerprint weights → ask Gemma for
+targeted `{param, scale, add}` edits → apply → measure again → keep if not
+worse, else revert → repeat.
+
+### Step 2 in detail — how ONE HumanEval question is graded (per-test, not binary)
+
+A problem is **not** just "pass/fail". `grade()` runs the model's completion and
+reports *why* it failed, in one of three stages:
+
+| stage | meaning | what is reported |
+|---|---|---|
+| `syntax` | `exec(prompt+completion)` raises | exception type + message + line |
+| `load` | completion defines no `entry_point` function | "function not defined" |
+| `tests` | function exists, but asserts run | **`tests_passed` / `tests_total`** + the exact failing assertions |
+
+For `tests`, the `check()` block is parsed with **`ast`** so multi-line asserts
+stay intact (naive line-splitting truncates them and wrongly blames the test),
+then every `assert` is executed **one at a time** — so we know *which* assert
+failed, not merely that something failed.
+
+Real example (cycle 1, `eval_results/weight_edit_cycle_1.json`):
+
+```json
+{
+  "task_id": "HumanEval/0",
+  "passed": false,
+  "generated": "\ndef get_current_number(numbers: List[int]) -> int:\n    ...",
+  "detail": {
+    "stage": "syntax",
+    "error": "SyntaxError: '(' was never closed (<gen>, line 77)",
+    "tests_passed": 0, "tests_total": 0, "fails": []
+  }
+}
+```
+
+and a graded failure (stage `tests`):
+
+```json
+{"stage": "tests", "tests_passed": 0, "tests_total": 4,
+ "fails": [{"line": 1, "assert": "assert candidate('(()()) ((())) () ((())()())') == ['(()())', ...]",
+            "err": "AssertionError"}]}
+```
+
+Cycle-1 grade distribution over all 30 problems: **22 `syntax` + 8 `tests`, 0 passed**.
+
+### Step 4 in detail — the EXACT prompt sent to Gemma 4 (real, cycle 1)
+
+```
+You are an editor for a 30M-param code model (SAN). Eval: HumanEval@30 pass 0/30.
+Each failure is graded per unit test (not just pass/fail): stage, how many
+asserts passed, and the exact failing assertion + error.
+Failing problems with their generated (wrong) code and per-test grading:
+
+--- HumanEval/0 ---
+Prompt:
+from typing import List
+
+def has_close_elements(numbers: List[float], threshold: float) -> bool:
+    """ Check if in given list of numbers, are any two numbers closer ... """
+Generated:
+    def get_current_number(numbers: List[int]) -> int:
+        """ Get the current number of numbers ... """
+        return ( ( ( ( ( ( ...
+Grade: stage=syntax  tests passed 0/0
+Error: SyntaxError: '(' was never closed (<gen>, line 77)
+
+--- HumanEval/1 ---
+Prompt:
+def is_zero_balanced(numbers): ...
+Generated:
+    def is_empty(s): ... return not is_empty(s)   # infinite recursion
+Grade: stage=tests  tests passed 0/4
+  FAILING TEST #1: assert candidate([]) == True  ->  AssertionError
+  ...
+
+(… up to 6 failing problems, then …)
+
+Weight fingerprint:
+phi_pre: shape=(384,) mean=0.0087 std=0.2470 norm=19.41
+blocks.0.attn_gate: shape=() mean=0.9591 std=nan norm=0.96
+blocks.10.hadamard_mlp.d1: shape=(512,) mean=1.0312 std=0.0000 norm=23.33
+… (all 206 tensors: name / shape / mean / std / norm) …
+
+Based on these concrete graded failures, propose 3-5 targeted weight edits as
+JSON list of objects with keys: param (full param name), scale (float near
+1.0), add (float small). Only output JSON, no prose.
+```
+
+This string is wrapped in Gemma's chat template
+(`apply_chat_template([{"role":"user","content":prompt}], add_generation_prompt=True)`),
+decoded, and generated **greedy, `max_new_tokens=512`** on CPU (bf16).
+
+### What Gemma 4 returned (real, cycle 1)
+
+```json
+[
+  {"param": "blocks.0.attn_gate",   "scale": 0.8, "add":  0.1},
+  {"param": "blocks.1.attn_gate",   "scale": 0.8, "add":  0.1},
+  {"param": "blocks.10.attn_gate",  "scale": 0.7, "add": -0.2},
+  {"param": "blocks.11.attn_gate",  "scale": 0.7, "add": -0.2},
+  {"param": "mtp_block.attn_gate",  "scale": 0.8, "add": -0.1}
+]
+```
+
+→ parsed with `re.search(r'\[.*\]', resp, re.S)` + `json.loads`, then each edit
+becomes `tensor.mul_(scale).add_(add)` (unknown param names are skipped and
+logged). Re-eval follows, then keep/revert.
+
+### Everything is logged (for later debugging / improvement)
+
+| file | contents |
+|---|---|
+| `weight_edit_run.log` | one line per cycle: eval before, proposed edits, eval after, **KEEP / REVERT** |
+| `weight_edit_debug.log` | **full prompt sent to Gemma, full raw Gemma response, parsed edits, decision** — every cycle |
+| `eval_results/weight_edit_cycle_<n>.json` | full 30-problem graded report (prompt, generated code, stage, tests passed/total, failing asserts) per cycle |
+
+### Editor: Gemma 4 12B it (local dir)
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+tok = AutoTokenizer.from_pretrained("/home/kenpeter/work/coder/gemma4_local")
+model = AutoModelForCausalLM.from_pretrained(
+    "/home/kenpeter/work/coder/gemma4_local", torch_dtype=torch.bfloat16, device_map="cpu")
+```
+`gemma4_local` is a symlink dir (`config.json`, `tokenizer.json`,
+`model.safetensors`, `chat_template.jinja`) pointing at
+`~/.cache/huggingface/hub/models--google--gemma-4-12B-it/` — needed because the
+HF hub ID can't be resolved offline. Chat template is used
+(`apply_chat_template`, add_generation_prompt=True), generation is greedy,
+`max_new_tokens=512`. **Requires `accelerate`** (installed; it provides
+`device_map`).
+
+Legacy alternative editor: 9B `qwopus-coder` via Ollama
+(`ollama serve`, `POST localhost:11434/api/generate`).
 
 ### What is HumanEval@30
 HumanEval is the standard code-generation benchmark (OpenAI). Each problem has a function signature + docstring prompt, a reference solution, and unit tests. HumanEval@30 = the first 30 problems of `eval_data/HumanEval.jsonl.gz`, evaluated pass@1 with greedy decoding (temperature 0.0), 160 new tokens. A problem passes if `exec(prompt + generated_completion + test + check(entry_point))` raises no exception.
@@ -375,14 +527,9 @@ check(has_close_elements)
 ```
 Pass if no AssertionError/exception is raised.
 
-One cycle (~30-60s) proceeds as:
-
-1. **Load** `san_latest.pt` (30M, 12 layers) into GPU; load tokenizer.
-2. **Inference + eval (HumanEval@30)** on the 30M model: generate a completion for each of the 30 problems (greedy, 160 new tokens), `exec` prompt+completion+tests, record pass/fail. Capture failing problem IDs, prompts, generated code, and error messages.
-3. **Build weight fingerprint**: for every parameter, name/shape/mean/std/norm.
-4. **Ask the 9B editor** (Ollama `qwopus-coder`) with a prompt containing the failing problems' prompts + generated code + errors + weight fingerprint. The 9B returns a JSON list of targeted edits `{param, scale, add}`.
-5. **Apply edits in place** to `san_latest.pt` tensors (multiply by scale, add delta).
-6. **Re-evaluate** the 30M model on HumanEval@30.
-7. **Keep or revert**: if pass rate did not drop, overwrite `san_latest.pt` in place with the edited weights; otherwise restore the previous weights.
-8. Repeat until 8pm deadline. A Telegram message is sent every 30 min reporting pass/fail counts.
-*No gradients; LLM reasons over raw numbers; verification via forward passes.*
+One cycle (~1–2 min) proceeds as described in
+[Single edit cycle (weight_edit.py) — CURRENT FLOW](#single-edit-cycle-weight_editpy--current-flow)
+above: load → HumanEval@30 → fingerprint → Gemma 4 editor → apply →
+re-evaluate → keep-or-revert. Runs in `weight_edit.py` until the 9 PM deadline
+(log: `weight_edit_run.log`). *No gradients; LLM reasons over raw numbers;
+verification via forward passes.*
