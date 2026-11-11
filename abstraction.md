@@ -181,6 +181,7 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
 | Resume from | `san_latest.pt` if `--resume` not given |
 | Resume-safe | num_layers auto-matched; per-layer params sliced if overridden |
 | Save on signal | SIGTERM/SIGINT sets a flag; saves at next step boundary then exits |
+| **Only checkpoint** | **`checkpoints/san/san_latest.pt` — no other checkpoint files are kept** (extra backups removed 2026-11-11) |
 
 ## Maxing GPU and CPU utilization
 - **GPU:** keep the model on CUDA, use bfloat16, keep `ckpt_every=1` (full recompute) to fit 12GB at B=8, and keep the data pipeline feeding the GPU. Cap power with `sudo nvidia-smi -pl 150` (resets to ~285W on reboot). Target ~100% util / 149W.
@@ -190,7 +191,7 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
 nvidia-smi --query-gpu=utilization.gpu,power.draw,memory.used --format=csv,noheader
 top -bn1 | grep "Cpu(s)"
 ```
-- **Weight-edit cycle:** runs on GPU during HumanEval eval (~97% util). The 9B editor runs on CPU via Ollama. Keep Ollama serving (`ollama serve`) so the editor is available.
+- **Weight-edit cycle:** runs on GPU during HumanEval eval (~97% util). The editor (Gemma 4 12B it) runs on **CPU**, bf16, so GPU eval and editor generation can overlap. Legacy alternative: 9B `qwopus-coder` via Ollama (`ollama serve`).
 
 ## Key operating insights
 - **Data feeding is 8 CPU workers, not the GPU.** Keep `num_workers=8`; dropping
@@ -268,23 +269,24 @@ run forward passes
   on benchmark
   (HumanEval/MBPP)
   ↓
-if accuracy ↑ → save
-  else revert
+save edited weights into
+san_latest.pt (always —
+the only checkpoint)
 ```
 
-*No gradients; weight editing over raw numbers; verification via forward passes. The SAN model is 31M parameters (12 layers) — trained and edited within this environment. The 9B Qwopus3-5-9B-Coder-Flash model (5.78 GB, GGUF format, Ollama-cached) is a separate transformer-based LLM architecture and can perform weight editing on the 31M SAN model via task-vector alignment and merge-based methods. All weight editing cycles run on `san_latest.pt` (31M, 12 layers) with the 9B model providing teacher guidance for edit direction identification. Cumulative cycles across all sessions: ~2000+. Loss improvement demonstrated during editing: actual model loss decreased from ~1.05 → 0.9986 (best) → 1.0282 (final) across previous editing cycles. Base checkpoint preserved at step 138508, loss 1.0756.
+*No gradients; weight editing over raw numbers; verification via forward passes. The SAN model is 31M parameters (12 layers) — trained and edited within this environment. The 9B Qwopus3-5-9B-Coder-Flash model (5.78 GB, GGUF format, Ollama-cached) is a separate transformer-based LLM architecture and can perform weight editing on the 31M SAN model via task-vector alignment and merge-based methods. All weight editing cycles run on `san_latest.pt` (31M, 12 layers) with the 9B model providing teacher guidance for edit direction identification. Cumulative cycles across all sessions: ~2000+. Loss improvement demonstrated during editing: actual model loss decreased from ~1.05 → 0.9986 (best) → 1.0282 (final) across previous editing cycles. Base checkpoint preserved at step 138508, loss 1.0756. *(Historical note: since 2026-11-11 no base copy is kept — `san_latest.pt` is the single checkpoint and edits overwrite it unconditionally.)*
 
 **Roles**: The **editor** (currently **Gemma 4 12B it**; previously 9B `qwopus-coder` via Ollama) reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training.
 
-**Active weight-edit cycle (updated 2026-11-11):** `weight_edit.py` running in background (PID 1665312) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`.
+**Active weight-edit cycle (updated 2026-11-11):** `weight_edit.py` running in background (PID 2145083) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`. **Every cycle saves into `san_latest.pt` regardless of the score (always-keep).**
 
 **Current status (2026-11-11):** the 30M model scores **0/30** on HumanEval@30
 (step 150000, train loss ~1.12). Greedy completions look like real Python but
 do not satisfy the unit tests (e.g. `fib` returns `(int(f) + int(f) - 1)`).
-Edits are kept only when the pass rate does not drop, so as of now nothing has
-improved the score — no "kept edit" entries in `weight_edit_run.log`.
+Every cycle's edits are saved into `san_latest.pt` **regardless of the score**
+(keep rule = always), so the checkpoint keeps changing every cycle.
 
-**Editor must be based on eval results**: the editor's decisions (whether 9B `qwopus-coder` or Gemma 4 12B it) MUST be grounded in the **inference/eval results of the 30M model (`san_latest.pt`)** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle MUST begin by running inference + eval on the 30M model first (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the editor → editor proposes targeted weight edits (NOT blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30. If the pass rate does not improve, revert the edits. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better editor model. The editor is only a reasoning tool; the artifact being improved is `san_latest.pt` (31M, 12 layers). Edits are NEVER blind; every edit MUST be justified by 30M inference/eval evidence using the HumanEval@30 benchmark. No toy micro tasks; use the proper standard benchmark (HumanEval@30). Both the 9B `qwopus-coder` (Ollama) and Gemma 4 12B it (HF cache) can serve as editors, but ALL editing decisions must be grounded in HumanEval@30 failures of `san_latest.pt`.
+**Editor must be based on eval results**: the editor's decisions (whether 9B `qwopus-coder` or Gemma 4 12B it) MUST be grounded in the **inference/eval results of the 30M model (`san_latest.pt`)** using the standard **HumanEval@30** benchmark (30 HumanEval problems, pass@1, greedy decoding). Each edit cycle MUST begin by running inference + eval on the 30M model first (HumanEval@30) to identify which problems fail → collect failures → feed those eval results to the editor → editor proposes targeted weight edits (NOT blind edits) → apply in place to `san_latest.pt` → re-evaluate on HumanEval@30 → **save the edited weights into `san_latest.pt` (always; there is no other checkpoint and no revert)**. The eval still runs every cycle because the editor must be grounded in real HumanEval@30 failures — it just no longer gates the save. **Goal: a better 30M model** (higher HumanEval pass rate / lower loss), not a better editor model. The editor is only a reasoning tool; the artifact being improved is `san_latest.pt` (31M, 12 layers). Edits are NEVER blind; every edit MUST be justified by 30M inference/eval evidence using the HumanEval@30 benchmark. No toy micro tasks; use the proper standard benchmark (HumanEval@30). Both the 9B `qwopus-coder` (Ollama) and Gemma 4 12B it (HF cache) can serve as editors, but ALL editing decisions must be grounded in HumanEval@30 failures of `san_latest.pt`.
 
 **Gemma 4 12B it — Downloaded (November 2026)**
 
@@ -350,17 +352,22 @@ All edits are applied in place to `san_latest.pt`. No gradients, no base/edited 
         │
 6.  RE-EVAL  ── HumanEval@30 again on the edited model
         │
-7.  DECIDE
-        │   pass rate did not drop  → KEEP: save edited state_dict over san_latest.pt
-        │   pass rate dropped       → REVERT: load the pre-edit state_dict
+7.  KEEP  ── always save the edited state_dict over `san_latest.pt`
+        │    (good or bad — single-checkpoint policy, no base copies)
         │
 8.  loop back to 2 until the deadline (21:00)
 ```
 
 ### Plain-text summary of the loop
 Load model → measure (HumanEval@30) → fingerprint weights → ask Gemma for
-targeted `{param, scale, add}` edits → apply → measure again → keep if not
-worse, else revert → repeat.
+targeted `{param, scale, add}` edits → apply → measure again → **save over
+`san_latest.pt` (always, good or bad)** → repeat.
+
+> **Single-checkpoint policy:** `checkpoints/san/san_latest.pt` is the ONLY
+> checkpoint. There are no base/edited copies and no rollback — every cycle's
+> edits are written straight into `san_latest.pt` regardless of whether the
+> HumanEval score improved. The eval numbers are recorded for the record, not
+> used as a gate.
 
 ### Step 2 in detail — how ONE HumanEval question is graded (per-test, not binary)
 
@@ -530,6 +537,6 @@ Pass if no AssertionError/exception is raised.
 One cycle (~1–2 min) proceeds as described in
 [Single edit cycle (weight_edit.py) — CURRENT FLOW](#single-edit-cycle-weight_editpy--current-flow)
 above: load → HumanEval@30 → fingerprint → Gemma 4 editor → apply →
-re-evaluate → keep-or-revert. Runs in `weight_edit.py` until the 9 PM deadline
-(log: `weight_edit_run.log`). *No gradients; LLM reasons over raw numbers;
-verification via forward passes.*
+re-evaluate → **save into `san_latest.pt` (always)**. Runs in `weight_edit.py`
+until the 9 PM deadline (log: `weight_edit_run.log`). *No gradients; LLM
+reasons over raw numbers; verification via forward passes.*
