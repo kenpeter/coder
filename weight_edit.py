@@ -143,6 +143,55 @@ def fmt_vec(v,ce=None):
     if ce is not None: s+=f" | ce {ce:.3f}"
     return s
 
+# Stage B: params worth offering the editor (the old menu was attn_gate only,
+# which is why every cycle proposed the same 5 edits).
+PARAM_MENU=[
+ 'embedding.weight','final_norm.scale','mtp_final_norm.scale',
+ 'blocks.N.attn.q_norm.scale','blocks.N.attn.k_norm.scale','blocks.N.attn_gate',
+ 'blocks.N.norm1.scale','blocks.N.post_attn_norm.scale','blocks.N.pre_hada_norm.scale',
+ 'blocks.N.hadamard_mlp.d1','blocks.N.hadamard_mlp.d2',
+ 'blocks.N.attn.q_proj.weight','blocks.N.attn.out_proj.weight',
+]
+def menu_txt():
+    return ("Edit menu (use a spread of these, N = 0..11; do not use the same "
+            "param every cycle):\n  " + ", ".join(PARAM_MENU))
+
+def ablate(m, edits, top_k=3):
+    """Stage B: score each proposed edit SEPARATELY, keep only the winners.
+
+    One edit at a time = credit assignment. Without this, 5 edits are applied
+    together and all are kept blind, so a no-op edit is indistinguishable from
+    a good one (that is what accumulated into the final_norm.scale collapse).
+
+    Returns (winners, rows) where rows = [(delta_ce, edit, ce_after, note)].
+    Positive delta_ce = the edit lowered loss = it helped.
+    """
+    base={k:v.detach().clone() for k,v in m.state_dict().items()}
+    ce_base=eval_ce(m)
+    rows=[]
+    for e in edits:
+        name=e.get('param')
+        if name not in base:
+            rows.append((0.0,e,None,'unknown param')); continue
+        cands=[dict(e)]
+        # direction search: scalar params are cheap and high-leverage, so also
+        # try the opposite direction (Gemma only ever proposes one).
+        if base[name].numel()==1 and abs(float(e.get('scale',1.0))-1.0)>1e-6:
+            inv=dict(e); inv['scale']=round(1.0/float(e.get('scale',1.0)),4); inv['add']=0.0
+            cands.append(inv)
+        for c in cands:
+            m.load_state_dict({k:v.clone() for k,v in base.items()},strict=False)
+            apply_edits(m,[c])
+            ce=eval_ce(m)
+            note='mirror' if c is not cands[0] else ''
+            rows.append((ce_base-ce,c,ce,note))
+    m.load_state_dict(base,strict=False)          # back to pre-edit state
+    rows.sort(key=lambda r:-r[0])
+    winners=[r for r in rows if r[0]>0][:top_k]
+    if not winners and rows:                      # keep the least-bad, never none
+        winners=[rows[0]]
+    return [r[1] for r in winners], rows
+
 def wfp(m):
     lines=[]
     for n,par in m.named_parameters():
@@ -227,6 +276,8 @@ Rules:
 - Justify each edit from the graded failures above (which stage fails, which assert).
 - Prefer params that control whether the model CONTINUES the prompt instead of restarting: attention q/k norms, attn_gate, embedding rows, norm scales.
 - Vary direction: if you scaled a param down last cycle and nothing moved, try up.
+- Use the menu below; do not propose blocks.0-4.attn_gate again (already tried, no gain).
+{menu_txt()}
 Only output JSON, no prose."""
     dlog(f"=== cycle {cyc} | eval before: {mp}/{mt} | fails={len(fails)} ===")
     dlog("--- PROMPT SENT TO EDITOR ---"); dlog(prompt); dlog("--- END PROMPT ---")
@@ -242,12 +293,21 @@ Only output JSON, no prose."""
         dlog("cycle %d: no valid edits -> skipped (no weights changed)"%cyc)
         time.sleep(2); continue
     before=copy.deepcopy(m.state_dict())
-    apply_edits(m,edits)
+    # Stage B: ablate — score each edit on its own, keep only the winners.
+    kept,rows=ablate(m,edits)
+    dlog("ABLATION (delta_ce>0 means it helped):")
+    for d,e,ce,note in rows:
+        dlog(f"   delta_ce {d:+.4f}  {e}  ce_after={None if ce is None else round(ce,4)} {note}")
+    log(f"ablation: {len(edits)} proposed -> {len(kept)} kept")
+    if kept!=edits:
+        log(f"  rejected {[e for e in edits if e not in kept]}")
+    apply_edits(m,kept)
     mp2,mt2,_,rep2=eval_he(m,tok,detail=True)
     v1=vec(rep2); ce1=eval_ce(m)
     log(f"after edit HumanEval@{mt2} {mp2}/{mt2} | {fmt_vec(v1,ce1)}")
     dlog(f"cycle {cyc}: applied {len(edits)} -> {fmt_vec(v1,ce1)} (was {fmt_vec(v0,ce0)})")
-    HIST.append({'cyc':cyc,'edits':edits,'before':fmt_vec(v0,ce0),'after':fmt_vec(v1,ce1)})
+    HIST.append({'cyc':cyc,'edits':f"proposed {edits} -> kept {kept}",
+                 'before':fmt_vec(v0,ce0),'after':fmt_vec(v1,ce1)})
     # always keep: edits are applied in place to san_latest.pt regardless of
     # whether the score improved (single-checkpoint policy, no base copies).
     ck=copy.deepcopy(ckpt); ck['model_state_dict']={k:v.detach().cpu() for k,v in m.state_dict().items()}
