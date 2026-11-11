@@ -282,8 +282,43 @@ def ask_gemma(prompt):
     text=_GEMMA_TOK.apply_chat_template([{"role":"user","content":prompt}], tokenize=False, add_generation_prompt=True)
     inputs=_GEMMA_TOK(text, return_tensors="pt")
     with torch.no_grad():
-        out=_GEMMA.generate(**inputs, max_new_tokens=512, do_sample=False)
+        out=_GEMMA.generate(**inputs, max_new_tokens=1600, do_sample=False)
     return _GEMMA_TOK.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+def parse_edits(resp):
+    """Salvage edit objects from an editor response, even if truncated.
+
+    The old code did re.search(r'\\[.*\\]') and required a closing bracket, so
+    a response cut off by max_new_tokens returned None -> edits=[] with NO
+    exception raised and nothing logged. That silently skipped a whole cycle
+    (observed 15:23:39: 'proposed edits: []').
+
+    This walks the string keeping brace depth and string state, so it
+    extracts every COMPLETE {...} object regardless of markdown fences,
+    prose, or the array never being closed. Truncation now costs at most the
+    last partial edit instead of the whole cycle.
+    """
+    s=re.sub(r'```[a-zA-Z]*','',resp)
+    out=[]; depth=0; start=None; in_str=False; esc=False
+    for i,ch in enumerate(s):
+        if in_str:
+            if esc: esc=False
+            elif ch=='\\': esc=True
+            elif ch=='"': in_str=False
+            continue
+        if ch=='"': in_str=True
+        elif ch=='{':
+            if depth==0: start=i
+            depth+=1
+        elif ch=='}':
+            depth-=1
+            if depth==0 and start is not None:
+                try:
+                    o=json.loads(s[start:i+1])
+                    if isinstance(o,dict) and o.get('param'): out.append(o)
+                except Exception: pass
+                start=None
+    return out
+
 def apply_edits(m,edits):
     sd=m.state_dict()
     for e in edits:
@@ -353,9 +388,10 @@ MEASURED DIAGNOSIS (do not re-derive this, build on it):
 {failtxt}
 Weight fingerprint:
 {wfp(m)}
-Propose 3-5 targeted weight edits as a JSON list of objects with keys: param (full param name), scale (float near 1.0), add (float small).
+Propose 3-5 targeted weight edits as a JSON list of objects with keys: param (full param name), scale (float near 1.0), add (float small), justification (ONE short sentence, under 20 words).
 Rules:
 - Justify each edit from the graded failures above (which stage fails, which assert).
+- Keep the whole reply compact: 3-5 edits, short justifications, no preamble, no code fences.
 - Prefer params that control whether the model CONTINUES the prompt instead of restarting: attention q/k norms, attn_gate, embedding rows, norm scales.
 - Vary direction: if you scaled a param down last cycle and nothing moved, try up.
 - Use the menu below; do not propose blocks.0-4.attn_gate again (already tried, no gain).
@@ -366,8 +402,9 @@ Only output JSON, no prose."""
     try:
         resp=ask_gemma(prompt)
         dlog("--- RAW EDITOR RESPONSE ---"); dlog(resp); dlog("--- END RESPONSE ---")
-        mch=re.search(r'\[.*\]',resp,re.S)
-        edits=json.loads(mch.group(0)) if mch else []
+        edits=parse_edits(resp)
+        if not edits and not re.search(r'\{',resp):
+            raise ValueError("no JSON object in editor response")
     except Exception as ex:
         log("editor parse err",ex); dlog("PARSE ERR:",ex); edits=[]
     log("proposed edits:",edits); dlog("PARSED EDITS:",json.dumps(edits))
