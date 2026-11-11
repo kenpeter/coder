@@ -71,6 +71,13 @@ def grade(r, completion):
         return False, {'stage':'load','error':f"`{r['entry_point']}` not defined in the completion",
                        'tests_passed':0,'tests_total':0,'fails':[]}
     asserts=_assert_stmts(r['test'])
+    # F9: the HumanEval test block is `def check(candidate): assert candidate(...)`.
+    # _assert_stmts pulls the asserts OUT of check(), so `candidate` is no longer
+    # in scope when we exec them -- it was a parameter. Without this binding
+    # every assert dies with NameError and assert_rate is structurally 0 no
+    # matter what the model wrote (verified: correct solution scores 7/7 bound,
+    # 0/7 unbound). Bind the entry point to the name the asserts expect.
+    g['candidate']=cand
     ok=0; fails=[]
     for i,a in enumerate(asserts):
         try:

@@ -278,14 +278,21 @@ the only checkpoint)
 
 **Roles**: The **editor** (**Gemma 4 12B it**, loaded from `gemma4_local/`) reasons over the 30M SAN model's weights/eval failures and proposes concrete weight edits. The **30M SAN model** (`san_latest.pt`, 12 layers) is the **editee** — its weights are edited in place. Only `san_latest.pt` is loaded; weight edits are applied **in place** directly to `san_latest.pt` (overwritten), no separate base/edited copies and no gradient training.
 
-**Active weight-edit cycle (updated 2026-11-11 13:48):** `weight_edit.py` running in background (PID 2962718) against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`. **Every cycle saves into `san_latest.pt` regardless of the score (always-keep).**
+**Active weight-edit cycle (running 2026-11-11 ~13:48 → 21:00):** `weight_edit.py` running in background against `san_latest.pt`, applying HumanEval@30-grounded edits in place, scheduled to run until 2026-11-11 21:00 (9 PM). Editor is **Gemma 4 12B it** loaded from the local dir `/home/kenpeter/work/coder/gemma4_local`. Progress logged to `weight_edit_run.log`. **Every cycle saves into `san_latest.pt` regardless of the score (always-keep).** As of ~19:00 the loop is on cycle 11 with the *pre-F9* grader; restarting on the F9 fix surfaces the true `assert_rate` (1%, see F9).
 
-**Current status (2026-11-11):** the 30M model scores **0/30** on HumanEval@30
-(step 150000). Every cycle's edits are saved into `san_latest.pt`
-**regardless of the score** (keep rule = always), so the checkpoint keeps
-changing every cycle. See [Root-cause findings](#root-cause-findings-2026-11-11)
-below — the 0/30 is **not** primarily the editor's fault, and the earlier
-"loss ~1.12" reading was stale metadata, not a measurement.
+**Current status (2026-11-11, ~19:00):** the 30M model's *true* HumanEval@30
+capability is **assert_rate 1% (1/119)** — not 0%. Stage C cured the restart
+disease (F1): `cont_rate`/`syntax_rate`/`defined_rate` all went 17% → ~100% and
+`p_indent` 0.06 → 0.99 (the 16:04 breakthrough). But a grader bug (F9) had
+been reporting `assert_rate` as structurally 0; and the cure exposed a new
+failure mode, the infinite-whitespace loop (F10) — the model now indents
+forever instead of writing a body. Every cycle's edits are saved into
+`san_latest.pt` **regardless of the score** (keep rule = always), so the
+checkpoint keeps changing every cycle. See
+[Root-cause findings](#root-cause-findings-2026-11-11) and
+[Stage C](#stage-c--the-boundary-edit-and-the-cure-mechanism--bugs-fought)
+below — the 0/30 was not primarily the editor's fault, the "loss ~1.12" reading
+was stale metadata, and the headline 0/30 figure was partly a grader artifact.
 
 ## Root-cause findings (2026-11-11)
 
@@ -419,6 +426,146 @@ first rung of the ladder now:
 
 The editor prompt carries the measured diagnosis from F5–F7 verbatim, so
 Gemma builds on it instead of re-deriving it each cycle.
+
+### F9 — The grader made `assert_rate` structurally 0 *(found 16:20, Stage C)*
+
+The `test` field for every HumanEval problem is wrapped in
+`def check(candidate):` — the asserts live **inside** that function, and
+`candidate` is its **parameter**. `_assert_stmts()` uses `ast.walk` to pull out
+every `Assert` node and then `grade()` executed each assert **standalone** in
+the completion's namespace `g`, where `candidate` is no longer in scope.
+
+Result: **every** assert died with `NameError: name 'candidate' is not
+defined`, for *every* model output — no matter how correct. `assert_rate` was
+0/119 by construction, not by model quality. Verified directly:
+
+| setup | HumanEval/0 (a correct solution) |
+|---|---|
+| asserts run with `candidate` bound to `entry_point` | **7/7 pass** |
+| asserts run unbound (what the loop did) | **0/7** — all `NameError` |
+
+**Fix (one line in `grade()`):** after finding `cand = g[entry_point]`, set
+`g['candidate'] = cand` before running the extracted asserts. With the fix, the
+true `assert_rate` on the current checkpoint is **1% (1/119)** — and
+`HumanEval/12` genuinely passes **1/3** asserts. So the model is not purely
+random at the logic level; it is just very weak.
+
+### F10 — The cure created a new disease: the infinite-whitespace loop *(found 16:20, Stage C)*
+
+Curing F1 (restart) pushed `p_indent` to ~0.99, and the model now emits a
+**run of 256 tab characters and nothing else** — an indent loop. It never
+writes a function body. Tested across every boundary dose, greedy, 6 prompts:
+
+| α | `p_indent` | `ce_py` | generation |
+|---|---|---|---|
+| 0.00 | 0.0597 | 3.1038 | pure tabs (256) |
+| 0.02 | 0.4617 | 3.1072 | pure tabs |
+| 0.03 | — | — | pure tabs |
+| 0.05 | 0.9760 | 3.1660 | pure tabs |
+| 0.06 (in checkpoint) | 0.9926 | 3.2040 | pure tabs |
+
+Lowering the dose does **not** break the loop — even α=0.02 (where newline is
+still ~50%) loops. The direction `u` is specific to the boundary (cos 0.98 at
+the 30 HumanEval boundaries, vs **0.53 mean / 0% of positions >0.9** mid-Python
+code), so the edit is *not* a global indent-boost; the loop is intrinsic: after
+emitting one indent the model simply re-lands on a boundary-like state and
+indents again, because it has no propensity to emit *code* tokens there.
+
+**Root cause (honest ceiling):** this is a capability gap, not a steering
+problem. The editee is a 30M model trained **~29% Python** with **~1 docstring
+per MB**; it never learned to generate Python function bodies. The boundary
+edit swapped one failure mode (restart-with-`def`) for another (indent-loop)
+and lifted `defined_rate`/`cont_rate` into the 90s% *vacuously* — whitespace
+parses, so `syntax_rate`/`defined_rate` look solved while nothing real is
+produced. True `assert_rate` = 1%.
+
+## Stage C — the boundary edit and the cure (mechanism + bugs fought)
+
+### The mechanism that actually moved the disease
+`logits = final_norm(x) @ embedding.weight.T`. All 30 HumanEval prompts end at
+the *same* state (docstring + newline), and their post-`final_norm` boundary
+hidden states are almost collinear: **cos to the mean = 0.983**. One consistent
+direction `u` therefore characterizes "the model is at the end of a docstring
+and must indent", which is why a *targeted* edit is possible at all.
+
+`boundary_edits()` emits `{'param':'embedding.weight','boundary':α}`, applied as
+**+α·u on the 101 whitespace-indent rows and −α·u on the newline row (222)**.
+Measured on real forward passes, real embedding rows:
+
+| α | `p_indent` | `ce_py` | verdict |
+|---|---|---|---|
+| 0 | 0.0597 | 3.1038 | baseline |
+| 0.02 | 0.4617 | 3.1072 | guard OK |
+| 0.05 | 0.9760 | 3.1660 | guard OK (+2.0%) |
+| 0.10 | 0.9999 | 3.5075 | **guard FAIL** |
+| 0.20 | 1.0000 | 5.6714 | **guard FAIL** |
+
+Ablation arbitrates these exactly like any other proposal; `p_indent` (not
+`ce_py`) is the ranking signal, with `ce_py` as a 5% guard.
+
+### The 16:04 breakthrough
+Applying the boundary edit took the disease metric from 0.06 → 0.98 and the
+score vector **from 17% on every rung to 100%**:
+
+```
+16:04:27  syntax_rate 100% | defined_rate 100% | assert_rate 0/122 | cont_rate 100% | p_indent 0.9997
+          (up from 17% / 17% / 0 / 17%)
+```
+
+First time in the session the model "wrote the function it was asked to write"
+(argmax-invariant whitespace aside). Ablation ranked the boundary candidates
+correctly (`+0.934`, `+0.700`) and rejected the blunt `embedding.weight 1.02`
+edit (`−0.0058`).
+
+### Bug fought: ablation double-dosing
+The first boundary cycle kept **both** `boundary 0.06 (+0.934)` and
+`boundary 0.03 (+0.700)`. Ablation scores each edit *independently* but applies
+the **union**, so the doses stacked to an effective 0.09 and pushed `ce_py` to
+**3.401**, over the 3.2585 ceiling — even though each passed alone at ~3.17
+(they are the same direction at two magnitudes, so keeping both was always
+double-dosing). Fixes:
+
+- **Combined-set guard:** after selecting winners, apply them together and drop
+  the lowest-scoring one until the union fits the ceiling.
+- **Recovery mode:** once `ce_py` is already over budget, scoring by Δ`p_indent`
+  can never pick a repair (it is maxed at ~1.0), so every edit would score
+  `−1e9` and the loop would thrash for hours. While over budget the only thing
+  that scores is actually *lowering* `ce_py`.
+- **`PI_FLOOR=0.90`:** never trade the cured disease back for a `ce` gain.
+- **Absolute `CE_REF` ceiling:** `CE_REF` is taken once at loop start (not
+  per-cycle relative), so a 2%-per-cycle cost cannot ratchet upward forever
+  while passing its own moving guard.
+
+The already-double-dosed checkpoint was corrected with a measured **−0.03**
+counter-edit: `p_indent 0.9997 → 0.9926` (cure intact), `ce_py 3.4017 →
+3.2040`, `ce_php 1.695 → 1.5890` — strictly better on both axes.
+
+### Bug fought: silent cycle skip
+At 15:23:39 the loop logged `proposed edits: []` and skipped a whole cycle
+without changing any weight. Cause: `re.search(r'\[.*\]')` returns `None` when
+the editor response is truncated before the closing `]` (the longer diagnosis
+prompt plus per-edit justifications blew past `max_new_tokens=512`), and the
+`else` branch yields `edits=[]` **with no exception**. `parse_edits()` now walks
+braces/strings explicitly and extracts every complete `{...}` regardless of
+fences, prose, or a missing closing bracket — verified to salvage **4 edits
+from the exact 15:23:39 response where the old code got 0**. `max_new_tokens`
+512 → 1600; the prompt now asks for one ≤20-word justification.
+
+### Outcome table (A → B → C)
+
+| stage | what it fixed | verified effect |
+|---|---|---|
+| A | dense score vector (`syntax_rate`/`defined_rate`/`assert_rate`/`ce`, per-test grading, history, ladder) | editor gets a signal that changes |
+| B | per-edit ablation, wide menu, direction mirror, `proposed→kept` logging | first real credit assignment; blunt edits rejected |
+| C | PHP→Python ruler + `cont_rate`; **boundary edit** cures the restart disease; `parse_edits`; double-dosing + recovery + F9 grader fixes | `cont/syntax/defined` 17%→~100%; but body generation still 1% (`F10`) |
+
+### The honest current ceiling
+After all of Stage A/B/C, the editee's real HumanEval@30 capability is
+**assert_rate 1% (1/119)** — it can emit a syntactically-plausible indent and a
+handful of assertions are half-right, but it cannot generate correct Python
+function bodies. This is a 30M, ~29%-Python, ~1-docstring/MB model; weight
+edits alone (no gradients, single checkpoint) cannot install a capability it
+was never trained for. Further cycles can only micro-tune within this envelope.
 
 ## Plan: A → B → C (approved 2026-11-11)
 
@@ -594,7 +741,10 @@ reports *why* it failed, in one of three stages:
 For `tests`, the `check()` block is parsed with **`ast`** so multi-line asserts
 stay intact (naive line-splitting truncates them and wrongly blames the test),
 then every `assert` is executed **one at a time** — so we know *which* assert
-failed, not merely that something failed.
+failed, not merely that something failed. **Critically (F9):** the extracted
+asserts are run with `g['candidate'] = entry_point` bound first — otherwise
+`candidate` is unbound (it was the *parameter* of `check()`) and every assert
+dies with `NameError`, making `assert_rate` structurally 0 for any model.
 
 Real example (cycle 1, `eval_results/weight_edit_cycle_1.json`):
 
@@ -666,7 +816,7 @@ JSON list of objects with keys: param (full param name), scale (float near
 
 This string is wrapped in Gemma's chat template
 (`apply_chat_template([{"role":"user","content":prompt}], add_generation_prompt=True)`),
-decoded, and generated **greedy, `max_new_tokens=512`** on CPU (bf16).
+decoded, and generated **greedy, `max_new_tokens=1600`** on CPU (bf16).
 
 ### What Gemma 4 returned (real, cycle 1)
 
@@ -705,7 +855,8 @@ model = AutoModelForCausalLM.from_pretrained(
 `~/.cache/huggingface/hub/models--google--gemma-4-12B-it/` — needed because the
 HF hub ID can't be resolved offline. Chat template is used
 (`apply_chat_template`, add_generation_prompt=True), generation is greedy,
-`max_new_tokens=512`. **Requires `accelerate`** (installed; it provides
+`max_new_tokens=1600` (raised from 512 after the 15:23 silent-skip bug — see
+F-related parse fix). **Requires `accelerate`** (installed; it provides
 `device_map`).
 
 
