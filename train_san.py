@@ -588,11 +588,12 @@ def main():
     if args.num_layers is not None:
         cfg.num_layers = args.num_layers
         print(f"  ⚙ num_layers overridden -> {cfg.num_layers}")
-    # B>=4 needs full gradient-checkpointing (recompute every layer) to fit 12GB
+    # B>=4 needs gradient-checkpointing to fit 12GB; ckpt_every stays as passed
+    # (default 3 = checkpoint every 3rd layer, keep the rest in VRAM → less recompute;
+    #  use --ckpt-every 1 for full recompute if you hit OOM)
     if args.batch_size >= 4:
         cfg.use_checkpoint = True
-        cfg.ckpt_every = 1
-        print(f"  ⚙ batch_size={args.batch_size} -> ckpt_every=1 (full recompute) for 12GB fit")
+        print(f"  ⚙ batch_size={args.batch_size} -> use_checkpoint=True, ckpt_every={args.ckpt_every}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(42)

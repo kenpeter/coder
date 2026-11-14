@@ -1,62 +1,43 @@
 #!/bin/bash
 # Data training cron script - runs every 30 minutes
-# Shows data training status using basic bash parsing
+# Shows data training status using Python for robust log parsing
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
-# Get the last line with step info from training log
-STEP_LINE=$(grep "step" /home/kenpeter/work/coder/train_san.log | tail -1)
+# Use Python to parse the training log reliably
+PYTHON_RESULT=$(/home/kenpeter/.hermes/tools/python-3.14.9+202****1021-linux-x64/bin/python3 /home/kenpeter/work/coder/parse_domain.py 2>/dev/null)
 
-if [ -n "$STEP_LINE" ]; then
-    # Extract step number (word after "step" until "|")
-    STEP=$(echo "$STEP_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="step") {print $(i+1); break}}')
+if [ -n "$PYTHON_RESULT" ]; then
+    # Parse the Python output
+    # Format: step=N/A coverage=N/A loss=N/A easy=N/A mid=N/A hard=N/A gold=N/A
+    # But actually it prints: easy=0.72 mid=0.86 hard=1.00 gold=0.81
+    # And step/coverage/loss are set separately
     
-    # Extract coverage percentage (after "data " until "%")
-    COVERAGE=$(echo "$STEP_LINE" | awk -F'data ' '{print $2}' | awk -F'%' '{print $1}' | tr -d ' ')
+    # Extract the domain values
+    EASY=$(echo "$PYTHON_RESULT" | grep -oP 'easy=\K[0-9.]+')
+    MID=$(echo "$PYTHON_RESULT" | grep -oP 'mid=\K[0-9.]+')
+    HARD=$(echo "$PYTHON_RESULT" | grep -oP 'hard=\K[0-9.]+')
+    GOLD=$(echo "$PYTHON_RESULT" | grep -oP 'gold=\K[0-9.]+')
     
-    # Extract loss value (after "loss " until "[" or "|")
-    LOSS=$(echo "$STEP_LINE" | awk -F'loss ' '{print $2}' | awk -F'[' '{print $1}' | awk -F'|' '{print $1}' | tr -d ' ')
+    # For step, coverage, loss - we need to get those from the training log directly
+    STEP_LINE=$(grep "step" /home/kenpeter/work/coder/train_san.log | tail -1)
+    if [ -n "$STEP_LINE" ]; then
+        STEP=$(echo "$STEP_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="step") {print $(i+1); break}}')
+        COVERAGE=$(echo "$STEP_LINE" | awk -F'data ' '{print $2}' | awk -F'%' '{print $1}' | tr -d ' ')
+        LOSS=$(echo "$STEP_LINE" | awk -F'loss ' '{print $2}' | awk -F'[' '{print $1}' | awk -F'|' '{print $1}' | tr -d ' ')
+    else
+        STEP="N/A"
+        COVERAGE="N/A"
+        LOSS="N/A"
+    fi
 else
     STEP="N/A"
     COVERAGE="N/A"
     LOSS="N/A"
-fi
-
-# Get per-domain values from the per-domain line
-PER_LINE=$(grep "per-domain" /home/kenpeter/work/coder/train_san.log | tail -1)
-
-if [ -n "$PER_LINE" ]; then
-    # Remove "per-domain: " prefix, then extract 4 numeric values
-    # Format: "code_easy 0.76 M-BM-7 code_gold 1.10 M-BM-7 code_hard 0.92 M-BM-7 code_mid 1.02"
-    # Strip the prefix and M-BM-7 suffixes, get just the numbers
-    DOMAIN_CONTENT=$(echo "$PER_LINE" | sed 's/.*per-domain: //' | tr -d '·' | tr -d ' ')
-    
-    # Extract all numbers from the content
-    NUMBERS=$(echo "$DOMAIN_CONTENT" | grep -o '[0-9]*\.[0-9]*')
-    
-    # Assign to easy, gold, hard, mid based on order in the log
-    # Typical order: code_easy, code_gold, code_hard, code_mid
-    COUNT=0
-    for n in $NUMBERS; do
-        COUNT=$((COUNT+1))
-        case $COUNT in
-            1) EASY="$n" ;;
-            2) GOLD="$n" ;;
-            3) HARD="$n" ;;
-            4) MID="$n" ;;
-        esac
-    done
-    
-    # If we don't have 4 numbers, set defaults
-    EASY="${EASY:-N/A}"
-    GOLD="${GOLD:-N/A}" 
-    HARD="${HARD:-N/A}"
-    MID="${MID:-N/A}"
-else
     EASY="N/A"
-    GOLD="N/A"
-    HARD="N/A"
     MID="N/A"
+    HARD="N/A"
+    GOLD="N/A"
 fi
 
 # Append to cron loss log with data training marker
