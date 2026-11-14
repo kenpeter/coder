@@ -39,8 +39,8 @@ Components:
 | max_steps | 1,000,000 |
 | save_every | 2000 steps |
 | **num_workers (DataLoader)** | **8** (`fork`, `prefetch_factor=4`, `persistent_workers=False`) |
-| GPU power cap | **none enforced** (limit 285 W; GPU draws ~190 W at 100% util — compute-bound, not power-limited) |
-| checkpoint | **`san_latest.pt` step 204189+, resumed at step ~204160; latest only, 1 model kept** |
+| GPU power cap | **165 W** (`sudo nvidia-smi -pl 165`; resets to 285 W on reboot — reapply after reboot). Card draws ~164 W at 100% util; cost only ~2% tok/s vs uncapped, runs ~2–3°C cooler. |
+| checkpoint | **`san_latest.pt` step ~204390+, resumed from step 204189; latest only, 1 model kept** |
 
 Resume is the normal path: `run_train.sh` resumes from
 `checkpoints/san/san_latest.pt` (latest only, overwritten every 2000 steps).
@@ -158,9 +158,12 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
   GPU 100 % / 148–149 W, 10.3 GB VRAM; loss ~1.4–1.5 on clean resume).
   x-small's own scale for reference: ~23k @100 W / ~31.5k @200 W.
 - **12 layers / B=8 / ckpt_every=3 / mtp_weight=0** (current run, resumed
-  step 204189): **~39.8k tok/s** (measured step windows: 39,952 · 39,807 ·
-  39,746 tok/s; avg ≈ 39.8k; GPU 100 % / ~190 W, ~9.8 GB VRAM, 81 °C,
-  loss ~0.8–0.9 main CE). Stable at the GPU compute ceiling.
+  step 204189): **~39.8k tok/s** uncapped (~195 W) and **~39.1k tok/s** at the
+  165 W cap (~164 W draw, 2640 MHz SM clock) — only ~2% tok/s cost for capping,
+  ~2–3°C cooler. Measured step windows: 39,952 · 39,807 · 39,746 tok/s
+  (uncapped); 39,476 · 38,984 · 38,980 tok/s (@165 W); avg ≈ 39.8k / ≈39.1k;
+  GPU 100 % / ~164–190 W, ~9.8 GB VRAM, 77–81 °C, loss ~0.8–0.9 main CE.
+  Stable at the GPU compute ceiling.
 - ✅ **31k reached at 150 W** once (a) data loading was moved off the main
   process (`num_workers=8`), (b) the dataset was made compact/picklable, and
   (c) the model was correctly built at 12 layers (not the default 27).
@@ -169,6 +172,9 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
   block+CE pass, ~8–10% compute saved). ~24% over the 31k baseline. GPU already
   at 100% util, so it's saturated on compute — no further cheap headroom without
   risking OOM (larger micro-batch) or changing training dynamics (seq_len).
+- **Power cap sensitivity:** uncapped ~195 W → ~39.8k tok/s; 170 W cap → ~39.1k
+  tok/s; 165 W cap → ~39.1k tok/s. All three hold ~100% GPU util; only capping
+  below ~160 W forces meaningful clock throttling.
 
 ## Architecture / resume bug (fixed)
 - `TrainConfig.num_layers` defaulted to **27**, and nothing read the checkpoint's
@@ -192,13 +198,33 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
 | Save on signal | SIGTERM/SIGINT sets a flag; saves at next step boundary then exits |
 | **Only checkpoint** | **`checkpoints/san/san_latest.pt` — no other checkpoint files are kept** (extra backups removed 2026-11-11) |
 
+## Repeat / resume this setup
+
+To resume pre-training at the current ~39k tok/s regime (ckpt_every=3, mtp_weight=0, 165 W power cap):
+
+1. **Apply the power cap** (resets to 285 W on reboot):
+   ```bash
+   sudo nvidia-smi -pl 165
+   ```
+2. **Launch via run_train.sh** (resumes from `san_latest.pt` automatically):
+   ```bash
+   cd /home/kenpeter/work/coder
+   bash run_train.sh
+   ```
+   This runs `train_san.py` with `--resume .../san_latest.pt --curriculum --data-dir .../_shards_final --num-layers 12 --batch-size 8 --ckpt-every 3 --log-every 10`.
+   To also drop MTP (current production setting), add `--mtp-weight 0` to the command in `run_train.sh` or pass it directly.
+3. **Verify startup:** after ~2 min the log should show `Resumed from .../san_latest.pt (step N)`, `compiled 13 block forwards`, then step lines at ~39k tok/s with GPU at 100% / ~164 W / ~9.8 GB VRAM.
+4. **Checkpoints:** saved every 2000 steps to `san_latest.pt` (overwrites; latest only). SIGTERM/SIGINT saves at the next step boundary then exits — safe to stop and resume anytime.
+
+The power cap must be re-applied after every reboot (`nvidia-smi` resets to 285 W).
+
 ## Maxing GPU and CPU utilization
 - **GPU:** keep the model on CUDA, use bfloat16, `use_checkpoint=True` with
   `ckpt_every=3` (fits 12 GB at B=8 with ~2.5 GB VRAM headroom; use
-  `--ckpt-every 1` for full recompute if you hit OOM), and keep the data pipeline
-  feeding the GPU. **No power cap enforced** — the 285 W limit is far above the
-  ~190 W the GPU draws at 100 % util; it's compute-bound, not power-limited.
-  Target ~100% util / ~190 W / ~39.8k tok/s.
+  `--ckpt-every 1` for full recompute if you hit OOM). Set power cap to
+  `sudo nvidia-smi -pl 165` (draws ~164 W at 100% util, ~2% tok/s cost vs
+  uncapped, ~2–3°C cooler; resets to 285 W on reboot — reapply). Target
+  ~100% util / ~164 W / ~39k tok/s.
 - **CPU:** use `num_workers=8` with `multiprocessing_context="fork"`,
   `prefetch_factor=4`, `pin_memory=True`. Workers do mmap reads off the main
   thread so the GPU is never starved. With `num_workers=0` throughput collapses
@@ -213,12 +239,13 @@ top -bn1 | grep "Cpu(s)"
 ## Key operating insights
 - **Data feeding is 8 CPU workers, not the GPU.** Keep `num_workers=8`; dropping
   to 0 collapses throughput to ~15.8k regardless of GPU headroom.
-- **GPU 100 % / ~190 W is the ceiling** — tok/s is then compute-bound; the only
-  remaining lever is fewer FLOPs/token (fewer layers, less recompute) or a
-  larger/more efficient batch (VRAM-limited at 12 GB). Do **not** raise the
-  power cap — it won't help (compute-bound, clocks already near max).
-- **`nvidia-smi` power cap resets to ~285 W on reboot** — no need to reapply a
-  150 W cap; the GPU self-limits to ~190 W at 100 % util on this config.
+- **GPU 100 % / ~164 W (at 165 W cap) is the ceiling** — tok/s is then
+  compute-bound; the only remaining lever is fewer FLOPs/token (fewer layers,
+  less recompute) or a larger/more efficient batch (VRAM-limited at 12 GB).
+  Raising the power cap above 165 W won't help (compute-bound, clocks already
+  near max); capping below ~160 W forces clock throttling and cuts speed.
+- **`nvidia-smi` power cap resets to ~285 W on reboot** — reapply
+  `sudo nvidia-smi -pl 165` after reboot if you want the capped power/heat.
 - **`ckpt_every=3` fits 12 GB at B=8** with ~2.5 GB VRAM free; full recompute
   (`ckpt_every=1`) also fits but costs more compute. Dropping `mtp_weight` to 0
   removed the MTP aux pass (~8–10% compute) for the biggest single gain.
