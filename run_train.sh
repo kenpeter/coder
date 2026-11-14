@@ -23,6 +23,8 @@ nohup python3 -u train_san.py \
   --data-dir /home/kenpeter/work/data/_shards_final \
   --num-layers 12 \
   --batch-size 8 \
+  --ckpt-every 3 \
+  --mtp-weight 0 \
   --log-every 10 \
   >> "$LOG" 2>&1 &
 
