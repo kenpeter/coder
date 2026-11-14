@@ -34,13 +34,13 @@ Components:
 | dtype | bfloat16 |
 | optimizer | AdamW (fused), betas (0.9, 0.95), wd 0.1 |
 | lr / min_lr / warmup | 4e-4 / 1e-4 / 1000 steps |
-| MTP weight | 0.1 |
-| use_checkpoint | True, **ckpt_every=1** (full recompute for 12 GB fit at B≥4) |
+| MTP weight | **0** (MTP aux pass dropped to save ~8–10% compute) |
+| use_checkpoint | True, **ckpt_every=3** (checkpoint every 3rd layer; keep the rest in VRAM — less recompute than ckpt_every=1, same 12GB fit at B≥4) |
 | max_steps | 1,000,000 |
 | save_every | 2000 steps |
 | **num_workers (DataLoader)** | **8** (`fork`, `prefetch_factor=4`, `persistent_workers=False`) |
-| GPU power cap | **150 W** (`nvidia-smi -pl 150`) |
-| checkpoint | **`san_latest.pt` step 150000, loss field 1.1258 (stale metadata — see F2), latest only, 1 model kept** |
+| GPU power cap | **none enforced** (limit 285 W; GPU draws ~190 W at 100% util — compute-bound, not power-limited) |
+| checkpoint | **`san_latest.pt` step 204189+, resumed at step ~204160; latest only, 1 model kept** |
 
 Resume is the normal path: `run_train.sh` resumes from
 `checkpoints/san/san_latest.pt` (latest only, overwritten every 2000 steps).
@@ -153,13 +153,22 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
 ### Reference numbers (measured on this box)
 - **27 layers / B=3** (what the code was mistakenly running, see bug): ~**17k**
   tok/s at GPU 100 %/149 W — compute-bound ceiling for a 27L model.
-- **12 layers / B=8** (x-small's config, now used): **~31–32k tok/s at 150 W**
+- **12 layers / B=8 / ckpt_every=1 / mtp_weight=0.1**: **~31–32k tok/s**
   (measured step windows: 30,951 · 32,111 · 31,638 · 32,309 tok/s; avg ≈ 31.75k;
   GPU 100 % / 148–149 W, 10.3 GB VRAM; loss ~1.4–1.5 on clean resume).
   x-small's own scale for reference: ~23k @100 W / ~31.5k @200 W.
+- **12 layers / B=8 / ckpt_every=3 / mtp_weight=0** (current run, resumed
+  step 204189): **~39.8k tok/s** (measured step windows: 39,952 · 39,807 ·
+  39,746 tok/s; avg ≈ 39.8k; GPU 100 % / ~190 W, ~9.8 GB VRAM, 81 °C,
+  loss ~0.8–0.9 main CE). Stable at the GPU compute ceiling.
 - ✅ **31k reached at 150 W** once (a) data loading was moved off the main
   process (`num_workers=8`), (b) the dataset was made compact/picklable, and
   (c) the model was correctly built at 12 layers (not the default 27).
+- ✅ **~39.8k reached** after (a) `ckpt_every=1` → `ckpt_every=3` (less layer
+  recompute in backward) and (b) `mtp_weight=0.1` → `0` (dropped the MTP aux
+  block+CE pass, ~8–10% compute saved). ~24% over the 31k baseline. GPU already
+  at 100% util, so it's saturated on compute — no further cheap headroom without
+  risking OOM (larger micro-batch) or changing training dynamics (seq_len).
 
 ## Architecture / resume bug (fixed)
 - `TrainConfig.num_layers` defaulted to **27**, and nothing read the checkpoint's
@@ -184,8 +193,16 @@ curriculum re-glide (every 2000 steps) — the count stays at 8.
 | **Only checkpoint** | **`checkpoints/san/san_latest.pt` — no other checkpoint files are kept** (extra backups removed 2026-11-11) |
 
 ## Maxing GPU and CPU utilization
-- **GPU:** keep the model on CUDA, use bfloat16, keep `ckpt_every=1` (full recompute) to fit 12GB at B=8, and keep the data pipeline feeding the GPU. Cap power with `sudo nvidia-smi -pl 150` (resets to ~285W on reboot). Target ~100% util / 149W.
-- **CPU:** use `num_workers=8` with `multiprocessing_context="fork"`, `prefetch_factor=4`, `pin_memory=True`. Workers do mmap reads off the main thread so the GPU is never starved. With `num_workers=0` throughput collapses to ~15.8k tok/s.
+- **GPU:** keep the model on CUDA, use bfloat16, `use_checkpoint=True` with
+  `ckpt_every=3` (fits 12 GB at B=8 with ~2.5 GB VRAM headroom; use
+  `--ckpt-every 1` for full recompute if you hit OOM), and keep the data pipeline
+  feeding the GPU. **No power cap enforced** — the 285 W limit is far above the
+  ~190 W the GPU draws at 100 % util; it's compute-bound, not power-limited.
+  Target ~100% util / ~190 W / ~39.8k tok/s.
+- **CPU:** use `num_workers=8` with `multiprocessing_context="fork"`,
+  `prefetch_factor=4`, `pin_memory=True`. Workers do mmap reads off the main
+  thread so the GPU is never starved. With `num_workers=0` throughput collapses
+  to ~15.8k tok/s.
 - **Live check:**
 ```bash
 nvidia-smi --query-gpu=utilization.gpu,power.draw,memory.used --format=csv,noheader
@@ -196,13 +213,15 @@ top -bn1 | grep "Cpu(s)"
 ## Key operating insights
 - **Data feeding is 8 CPU workers, not the GPU.** Keep `num_workers=8`; dropping
   to 0 collapses throughput to ~15.8k regardless of GPU headroom.
-- **GPU 100 % / 150 W is the ceiling** — tok/s is then compute-bound; the only
+- **GPU 100 % / ~190 W is the ceiling** — tok/s is then compute-bound; the only
   remaining lever is fewer FLOPs/token (fewer layers, less recompute) or a
-  larger/more efficient batch (VRAM-limited at 12 GB).
-- **`nvidia-smi` power cap resets to ~285 W on reboot** — reapply
-  `sudo nvidia-smi -pl 150`.
-- **12 L at B=8 forces full gradient checkpointing (`ckpt_every=1`)** to fit 12 GB;
-  it is the config x-small uses for its 31k number.
+  larger/more efficient batch (VRAM-limited at 12 GB). Do **not** raise the
+  power cap — it won't help (compute-bound, clocks already near max).
+- **`nvidia-smi` power cap resets to ~285 W on reboot** — no need to reapply a
+  150 W cap; the GPU self-limits to ~190 W at 100 % util on this config.
+- **`ckpt_every=3` fits 12 GB at B=8** with ~2.5 GB VRAM free; full recompute
+  (`ckpt_every=1`) also fits but costs more compute. Dropping `mtp_weight` to 0
+  removed the MTP aux pass (~8–10% compute) for the biggest single gain.
 
 ## Data pipeline history (kept for reference)
 - L2 = CPT pre-training tiers (easy/medium/hard); L3 (gold) = SFT/mid-train.
