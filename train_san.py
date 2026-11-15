@@ -116,8 +116,8 @@ WEB_BOOST_FILE = Path(__file__).parent / "curriculum_boost.json"
 
 def _smooth_tier_weights(t):
     tt = t if t < 0.5 else 1.0 - t
-    w_easy = 0.05 + 0.25 * (1 - tt)
-    w_hard = min(0.70, 0.25 + 0.45 * tt)
+    w_easy = 0.05 + 0.12 * (1 - tt)   # reduced easy (PHP) share
+    w_hard = min(0.82, 0.30 + 0.52 * tt)  # increased hard (Python code_gold) share
     w_med = max(0.0, 1.0 - w_easy - w_hard)
     return w_easy, w_med, w_hard
 

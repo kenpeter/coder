@@ -1,0 +1,7 @@
+{
+  "code_easy": 0.3,
+  "code_mid": 2.5,
+  "code_hard": 1.5,
+  "code_gold": 4.0,
+  "_comment": "Python-heavy curriculum boost: reduce PHP code_easy, boost Python-rich code_gold/code_mid. Hot-reloaded at every re-glide (every 2000 steps)."
+}
