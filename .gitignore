@@ -19,6 +19,8 @@ eval_results/
 training.pid
 cron_log.txt
 train_san_run*.log
+ticker_heartbeat
+ticker_last_success
 
 # local symlinks into HF cache (absolute paths, not portable)
 gemma4_local/
