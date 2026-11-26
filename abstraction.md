@@ -46,14 +46,11 @@ Resume is the normal path: `run_train.sh` resumes from
 `checkpoints/san/san_latest.pt` (latest only, overwritten every 2000 steps).
 
 ## Data
-- **Shards:** `/home/kenpeter/work/data/_shards_final` — 338 GB, 1,816 `.bin`
-  files, raw `uint16`, ~**88.4M** sequences at `seq_len=2048`.
+- **Shards:** `/home/kenpeter/work/data/_shards_final` — 435 GB, 1,626 `.bin` files at top level + 4 domain subdirectories (`code_easy`, `code_medium`, `code_hard`, `code_gold`), raw `uint16`, ~88M sequences at `seq_len=2048`.
 - **Domains:** `code_easy`, `code_mid` (=code_medium), `code_hard`, `code_gold`.
-- **Curriculum (`--curriculum`):** stratified interleave each step.
-  - tier splits: EASY `{code_easy: 1.0}`, MED `{code_mid: 1.0}`,
-    HARD `{code_hard: 0.7, code_gold: 0.3}`
-  - tier weights glide easy→hard over the 1M-step plan, with a periodic easy
-    "review wave" (G2 anti-forgetting) and a `curriculum_boost.json` override.
+- **Curriculum (default, enforced):** DoReMi-lite G1-G4 stratified interleave every step. **Flat farm mode removed** — `--curriculum` is always on; `--no-curriculum` is deprecated and only kept for compatibility.
+  - tier splits: EASY `{code_easy: 1.0}`, MED `{code_mid: 1.0}`, HARD `{code_hard: 0.7, code_gold: 0.3}`
+  - tier weights glide easy→hard over the 1M-step plan, with a periodic easy "review wave" (G2 anti-forgetting) and a `curriculum_boost.json` override.
   - re-glide (ratio rebuild) every `CURRICULUM_UPDATE_INTERVAL = 2000` steps.
 
 ## DataLoader workers — why `num_workers=8`
@@ -206,13 +203,14 @@ To resume pre-training at the current ~39k tok/s regime (ckpt_every=3, mtp_weigh
    ```bash
    sudo nvidia-smi -pl 165
    ```
-2. **Launch via run_train.sh** (resumes from `san_latest.pt` automatically):
+2. **Launch via run_train.sh** (resumes from `san_latest.pt` automatically — curriculum is on by default):
    ```bash
    cd /home/kenpeter/work/coder
    bash run_train.sh
    ```
    This runs `train_san.py` with `--resume .../san_latest.pt --curriculum --data-dir .../_shards_final --num-layers 12 --batch-size 8 --ckpt-every 3 --log-every 10`.
    To also drop MTP (current production setting), add `--mtp-weight 0` to the command in `run_train.sh` or pass it directly.
+   To disable curriculum (flat farm — deprecated), add `--no-curriculum`.
 3. **Verify startup:** after ~2 min the log should show `Resumed from .../san_latest.pt (step N)`, `compiled 13 block forwards`, then step lines at ~39k tok/s with GPU at 100% / ~164 W / ~9.8 GB VRAM.
 4. **Checkpoints:** saved every 2000 steps to `san_latest.pt` (overwrites; latest only). SIGTERM/SIGINT saves at the next step boundary then exits — safe to stop and resume anytime.
 

@@ -468,7 +468,7 @@ class TrainConfig:
     data_dir: str = "/home/kenpeter/work/data/_shards_final"
     checkpoint_dir: str = "/home/kenpeter/work/x-small/checkpoints/san"  # inside project (user rule)
     dtype: str = "bfloat16"
-    curriculum: bool = False  # DoReMi-lite G1-G4 stratified dynamic mix
+    curriculum: bool = True  # DoReMi-lite G1-G4 stratified dynamic mix (flat mode removed)
     dedup: bool = False       # drop near-duplicate 13-gram sequences
 
 
@@ -561,8 +561,8 @@ def main():
                    help="per user rule: checkpoints live INSIDE the project dir, not /work/checkpoints")
     ap.add_argument("--save-every", type=int, default=2000)
     ap.add_argument("--resume")
-    ap.add_argument("--curriculum", action="store_true",
-                    help="use DoReMi-lite G1-G4 stratified dynamic mix instead of flat farm")
+    ap.add_argument("--no-curriculum", action="store_true",
+                   help="disable DoReMi-lite curriculum (flat farm mode — DEPRECATED, use --curriculum)")
     ap.add_argument("--dedup", action="store_true",
                     help="drop exact/near-duplicate 13-gram sequences (slower startup, cleaner data)")
     ap.add_argument("--no-checkpoint", action="store_true",
@@ -581,7 +581,7 @@ def main():
         max_steps=args.steps, batch_size=args.batch_size, grad_accum=args.grad_accum,
         lr=args.lr, seq_len=args.seq_len, mtp_weight=args.mtp_weight,
         data_dir=args.data_dir, checkpoint_dir=args.checkpoint_dir,
-        save_every=args.save_every,        curriculum=args.curriculum, dedup=args.dedup,
+        save_every=args.save_every,        curriculum=not args.no_curriculum, dedup=args.dedup,
         use_checkpoint=not args.no_checkpoint, log_every=args.log_every)
 
     # ---- resume-safe architecture overrides ----
